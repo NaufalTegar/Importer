@@ -874,12 +874,12 @@ UserInputService.InputEnded:Connect(function(input)
     end
 end)
 
--- MAIN CONTAINER
+-- MAIN CONTAINER (Horizontal Style)
 local Main = Instance.new("Frame", UI)
 Main.Name = "MainFrame"
-Main.Size = UDim2.new(0, 300, 0, 350)
-Main.Position = UDim2.new(0.5, -150, 0.5, -175)
-Main.BackgroundColor3 = Color3.fromRGB(60, 0, 0) -- merah gelap
+Main.Size = UDim2.new(0, 600, 0, 300) -- lebih lebar daripada tinggi
+Main.Position = UDim2.new(0.5, -300, 0.5, -150)
+Main.BackgroundColor3 = Color3.fromRGB(25, 25, 25) -- abu-abu gelap
 Main.BackgroundTransparency = 0.05
 Main.BorderSizePixel = 0
 Main.ClipsDescendants = true
@@ -890,8 +890,9 @@ MainCorner.CornerRadius = UDim.new(0, 10)
 
 local MainStroke = Instance.new("UIStroke", Main)
 MainStroke.Thickness = 1.2
-MainStroke.Color = Color3.fromRGB(200, 40, 40) -- stroke merah
+MainStroke.Color = Color3.fromRGB(200, 40, 40)
 MainStroke.Transparency = 0.2
+
 
 -- TITLE BAR WITH VECTOR PACKAGE ICON
 local TitleBar = Instance.new("Frame", Main)
