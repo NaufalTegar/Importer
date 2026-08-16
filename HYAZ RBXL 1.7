@@ -1,4 +1,4 @@
--- HYAZ RBXL IMPORTER V1.4
+-- HYAZ RBXL IMPORTER V1.7
 -- Standalone RBXL binary importer extracted from HYAZ ULTIMATE.
 -- Focus: .rbxl binary parsing + decompression + instance reconstruction.
 -- RBXM/RBXMX/UI utama tidak ikut di file ini agar engine lebih mudah diuji.
@@ -17,7 +17,7 @@ _G.Hyaz_RAW_SOURCES = _G.Hyaz_RAW_SOURCES or {}
 -- CONFIG
 -- ============================================================
 local CONFIG = {
-    WindowName = "HYAZ RBXL IMPORTER V1.4",
+    WindowName = "HYAZ RBXL IMPORTER V1.7",
     ScanLabel = "SCAN RBXL",
     MaxFiles = 80,
     KeepPreviousImports = true,
@@ -39,7 +39,13 @@ local function Buffer(str, allowOverflows)
     end
     function Stream:seek(len) self.Offset = math.clamp(self.Offset + len, 0, self.Length) end
     function Stream:readNumber(fmt, shift)
-        fmt = fmt or "I1"; local chunk = self:read(string.packsize(fmt), shift); return string.unpack(fmt, chunk)
+        fmt = fmt or "I1"
+        local need = string.packsize(fmt)
+        local chunk = self:read(need, shift)
+        if #chunk < need then
+            error(("RBXL binary underflow: need %d bytes, got %d at offset %d (format %s)"):format(need, #chunk, self.Offset - #chunk, fmt))
+        end
+        return string.unpack(fmt, chunk)
     end
     function Stream:append(s) self.Source = self.Source .. s; self.Length = #self.Source end
     function Stream:toEnd() self.Offset = self.Length end
@@ -244,6 +250,14 @@ local function _readVector2(buffer, count)
     return out
 end
 
+local function _readVector2int16(buffer, count)
+    local out = table.create(count)
+    for i = 1, count do
+        out[i] = Vector2int16.new(buffer:readNumber("<i2"), buffer:readNumber("<i2"))
+    end
+    return out
+end
+
 local function _readCFrames(buffer, count)
     local ids = table.create(count)
     local rot = table.create(count)
@@ -300,23 +314,23 @@ local function _readCFrames(buffer, count)
     return out
 end
 
-local function _readUDim(buffer)
-    local scale = basicTypes.Float32(buffer)
-    local offset = basicTypes.Int32(buffer)
-    return UDim.new(scale, offset)
+local function _readUDim(buffer, count)
+    local scales = basicTypes.RbxF32Array(buffer, count)
+    local offsets = basicTypes.Int32Array(buffer, count)
+    local out = table.create(count)
+    for i = 1, count do
+        out[i] = UDim.new(scales[i], offsets[i])
+    end
+    return out
 end
 
 local function _readUDim2(buffer, count)
-    local xs = table.create(count)
-    local xo = table.create(count)
-    local ys = table.create(count)
-    local yo = table.create(count)
-
-    for i = 1, count do xs[i] = basicTypes.Float32(buffer) end
-    for i = 1, count do xo[i] = basicTypes.Int32(buffer) end
-    for i = 1, count do ys[i] = basicTypes.Float32(buffer) end
-    for i = 1, count do yo[i] = basicTypes.Int32(buffer) end
-
+    -- RBXL stores UDim2 as four separately interleaved component arrays:
+    -- X.Scale, Y.Scale, X.Offset, Y.Offset.
+    local xs = basicTypes.RbxF32Array(buffer, count)
+    local ys = basicTypes.RbxF32Array(buffer, count)
+    local xo = basicTypes.Int32Array(buffer, count)
+    local yo = basicTypes.Int32Array(buffer, count)
     local out = table.create(count)
     for i = 1, count do
         out[i] = UDim2.new(xs[i], xo[i], ys[i], yo[i])
@@ -337,13 +351,14 @@ end
 local function _readFaces(buffer, count)
     local out = table.create(count)
     for i = 1, count do
+        local bits = string.byte(buffer:read()) or 0
         out[i] = {
-            Right = string.byte(buffer:read()) ~= 0,
-            Top = string.byte(buffer:read()) ~= 0,
-            Back = string.byte(buffer:read()) ~= 0,
-            Left = string.byte(buffer:read()) ~= 0,
-            Bottom = string.byte(buffer:read()) ~= 0,
-            Front = string.byte(buffer:read()) ~= 0,
+            Front = bit32.band(bits, 0x01) ~= 0,
+            Bottom = bit32.band(bits, 0x02) ~= 0,
+            Left = bit32.band(bits, 0x04) ~= 0,
+            Back = bit32.band(bits, 0x08) ~= 0,
+            Top = bit32.band(bits, 0x10) ~= 0,
+            Right = bit32.band(bits, 0x20) ~= 0,
         }
     end
     return out
@@ -352,17 +367,33 @@ end
 local function _readAxes(buffer, count)
     local out = table.create(count)
     for i = 1, count do
+        local bits = string.byte(buffer:read()) or 0
         out[i] = {
-            X = string.byte(buffer:read()) ~= 0,
-            Y = string.byte(buffer:read()) ~= 0,
-            Z = string.byte(buffer:read()) ~= 0,
+            X = bit32.band(bits, 0x01) ~= 0,
+            Y = bit32.band(bits, 0x02) ~= 0,
+            Z = bit32.band(bits, 0x04) ~= 0,
         }
     end
     return out
 end
 
+local function _readBigEndianUintArray(buffer, count)
+    if count < 1 then return {} end
+    local bytes = buffer:read(count * 4)
+    local out = table.create(count)
+    for i = 1, count do
+        local p = i
+        local b1 = string.byte(bytes, p) or 0
+        local b2 = string.byte(bytes, p + count) or 0
+        local b3 = string.byte(bytes, p + count * 2) or 0
+        local b4 = string.byte(bytes, p + count * 3) or 0
+        out[i] = b1 * 16777216 + b2 * 65536 + b3 * 256 + b4
+    end
+    return out
+end
+
 local function _readBrickColor(buffer, count)
-    local ids = basicTypes.unsignedIntArray(buffer, count)
+    local ids = _readBigEndianUintArray(buffer, count)
     local out = table.create(count)
     for i = 1, count do
         local ok, value = pcall(BrickColor.new, ids[i])
@@ -372,22 +403,30 @@ local function _readBrickColor(buffer, count)
 end
 
 local function _readEnumArray(buffer, count)
-    -- Binary enum values are stored as interleaved unsigned integers.
-    return basicTypes.unsignedIntArray(buffer, count)
+    return _readBigEndianUintArray(buffer, count)
 end
 
 local function _readPhysicalProperties(buffer, count)
     local out = table.create(count)
     for i = 1, count do
-        local custom = string.byte(buffer:read()) ~= 0
-        if custom then
+        local flags = string.byte(buffer:read()) or 0
+        if bit32.band(flags, 0x01) ~= 0 then
+            local density = buffer:readNumber("<f")
+            local friction = buffer:readNumber("<f")
+            local elasticity = buffer:readNumber("<f")
+            local frictionWeight = buffer:readNumber("<f")
+            local elasticityWeight = buffer:readNumber("<f")
+            local acoustic = 1
+            if bit32.band(flags, 0x02) ~= 0 then
+                acoustic = buffer:readNumber("<f")
+            end
             out[i] = {
-                CustomPhysicalProperties = true,
-                Density = buffer:readNumber("<f"),
-                Friction = buffer:readNumber("<f"),
-                Elasticity = buffer:readNumber("<f"),
-                FrictionWeight = buffer:readNumber("<f"),
-                ElasticityWeight = buffer:readNumber("<f"),
+                Density = density,
+                Friction = friction,
+                Elasticity = elasticity,
+                FrictionWeight = frictionWeight,
+                ElasticityWeight = elasticityWeight,
+                AcousticAbsorption = acoustic,
             }
         else
             out[i] = nil
@@ -411,6 +450,67 @@ end
 
 local function _readSecurityCapabilities(buffer, count)
     return basicTypes.unsignedIntArray(buffer, count)
+end
+
+local function _readNumberSequence(buffer, count)
+    local out = table.create(count)
+    for i = 1, count do
+        local n = buffer:readNumber("<I4")
+        local keys = table.create(n)
+        for k = 1, n do
+            keys[k] = NumberSequenceKeypoint.new(
+                buffer:readNumber("<f"),
+                buffer:readNumber("<f"),
+                buffer:readNumber("<f")
+            )
+        end
+        out[i] = NumberSequence.new(keys)
+    end
+    return out
+end
+
+local function _readColorSequence(buffer, count)
+    local out = table.create(count)
+    for i = 1, count do
+        local n = buffer:readNumber("<I4")
+        local keys = table.create(n)
+        for k = 1, n do
+            local t = buffer:readNumber("<f")
+            local r = buffer:readNumber("<f")
+            local g = buffer:readNumber("<f")
+            local b = buffer:readNumber("<f")
+            buffer:readNumber("<f") -- serialized envelope, unused
+            keys[k] = ColorSequenceKeypoint.new(t, Color3.new(r,g,b))
+        end
+        out[i] = ColorSequence.new(keys)
+    end
+    return out
+end
+
+local function _readCFrameQuat(buffer, count)
+    -- This type is documented but effectively unused by modern Roblox files.
+    -- Decode it defensively so an encountered value cannot desynchronize the
+    -- PROP stream. The position section follows the rotation section.
+    local ids = table.create(count)
+    local quats = table.create(count)
+    for i = 1, count do
+        local id = string.byte(buffer:read()) or 0
+        ids[i] = id
+        if id == 0 then
+            quats[i] = {
+                buffer:readNumber("<f"), buffer:readNumber("<f"),
+                buffer:readNumber("<f"), buffer:readNumber("<f")
+            }
+        end
+    end
+    local pos = _readVector3(buffer, count)
+    local out = table.create(count)
+    for i = 1, count do
+        -- Converting arbitrary quaternion data is not needed for normal RBXL
+        -- files; identity is safer than inventing a wrong rotation.
+        out[i] = CFrame.new(pos[i])
+    end
+    return out
 end
 
 local function _decodePropertyArray(buffer, typeID, count, sharedStrings)
@@ -478,16 +578,16 @@ local function _decodePropertyArray(buffer, typeID, count, sharedStrings)
         return _readVector3(buffer, count)
 
     elseif typeID == 0x0F then
-        return _readVector2(buffer, count)
+        return _readVector2int16(buffer, count)
 
     elseif typeID == 0x10 then
         return _readCFrames(buffer, count)
 
     elseif typeID == 0x11 then
-        return _readEnumArray(buffer, count)
+        return _readCFrameQuat(buffer, count)
 
     elseif typeID == 0x12 then
-        return basicTypes.unsignedIntArray(buffer, count)
+        return _readEnumArray(buffer, count)
 
     elseif typeID == 0x13 then
         return basicTypes.RefArray(buffer, count)
@@ -504,15 +604,10 @@ local function _decodePropertyArray(buffer, typeID, count, sharedStrings)
         return a
 
     elseif typeID == 0x15 then
-        return _readPhysicalProperties(buffer, count)
+        return _readNumberSequence(buffer, count)
 
     elseif typeID == 0x16 then
-        return basicTypes.StringArray and basicTypes.StringArray(buffer, count) or
-            (function()
-                local a = table.create(count)
-                for i = 1, count do a[i] = basicTypes.String(buffer) end
-                return a
-            end)()
+        return _readColorSequence(buffer, count)
 
     elseif typeID == 0x17 then
         local a = table.create(count)
@@ -534,7 +629,7 @@ local function _decodePropertyArray(buffer, typeID, count, sharedStrings)
         return basicTypes.Int64Array(buffer, count)
 
     elseif typeID == 0x1C then
-        local idx = basicTypes.unsignedIntArray(buffer, count)
+        local idx = _readBigEndianUintArray(buffer, count)
         local a = table.create(count)
         for i = 1, count do
             a[i] = sharedStrings and sharedStrings[idx[i]] or nil
@@ -542,13 +637,26 @@ local function _decodePropertyArray(buffer, typeID, count, sharedStrings)
         return a
 
     elseif typeID == 0x1D then
-        -- Reserved/engine-specific payload. Do not pretend this is Source.
-        -- Preserve the raw bytes only when the surrounding property can be
-        -- represented safely; otherwise leave it undecoded.
-        return nil
+        -- Bytecode has the same storage as String. We preserve it as raw text
+        -- but never execute it.
+        local a = table.create(count)
+        for i = 1, count do a[i] = basicTypes.String(buffer) end
+        return a
 
     elseif typeID == 0x1E then
-        return _readSecurityCapabilities(buffer, count)
+        -- Optional<T>: the chunk stores the inner type id, the values, then
+        -- a bool array indicating which entries are present.
+        local innerType = string.byte(buffer:read())
+        local values = _decodePropertyArray(buffer, innerType, count, sharedStrings)
+        local boolType = string.byte(buffer:read())
+        local present = table.create(count)
+        if boolType == 0x02 then
+            for i = 1, count do present[i] = string.byte(buffer:read()) ~= 0 end
+        else
+            error("RBXL Optional property has invalid bool type: " .. tostring(boolType))
+        end
+        return values
+
 
     elseif typeID == 0x1F then
         local a = table.create(count)
@@ -572,6 +680,32 @@ local function _decodePropertyArray(buffer, typeID, count, sharedStrings)
             }
         end
         return a
+
+    elseif typeID == 0x22 then
+        -- Content is a tagged list. For import purposes, URI entries are the
+        -- useful part; object/external-object entries are preserved as nil.
+        local sourceTypes = _readEnumArray(buffer, count)
+        local uriCount = buffer:readNumber("<I4")
+        local uris = table.create(uriCount)
+        for i = 1, uriCount do uris[i] = basicTypes.String(buffer) end
+        local objectCount = buffer:readNumber("<I4")
+        local objectRefs = basicTypes.RefArray(buffer, objectCount)
+        local externalCount = buffer:readNumber("<I4")
+        local externalRefs = basicTypes.RefArray(buffer, externalCount)
+        local ui, oi, ei = 1, 1, 1
+        local out = table.create(count)
+        for i = 1, count do
+            local t = sourceTypes[i]
+            if t == 1 then
+                out[i] = uris[ui]; ui += 1
+            elseif t == 2 then
+                oi += 1
+                out[i] = nil
+            else
+                out[i] = nil
+            end
+        end
+        return out
     end
 
     return nil
@@ -584,7 +718,16 @@ local function parseRBXLBinary(data)
     local classCount=r:readNumber("<I4"); local instCount=r:readNumber("<I4"); r:read(8)
     local chunks={META={},SSTR={},INST={},PROP={},PRNT={},SIGN={},["END\0"]={}}
     while r.Offset < r.Length do
+        if (r.Length - r.Offset) < 16 then
+            return nil, "RBXL chunk header terpotong di offset " .. tostring(r.Offset)
+        end
         local sig=r:read(4); local compressed=r:readNumber("<I4"); local decompressed=r:readNumber("<I4"); r:read(4)
+        if compressed < 0 or decompressed < 0 then
+            return nil, "RBXL ukuran chunk tidak valid: " .. tostring(sig)
+        end
+        if sig ~= "END\0" and compressed > (r.Length - r.Offset) then
+            return nil, ("RBXL chunk %s terpotong: perlu %d byte, tersisa %d"):format(sig, compressed, r.Length - r.Offset)
+        end
         if sig=="END\0" then chunks[sig][#chunks[sig]+1]={Data=r:read(decompressed)}; break end
         local payload
         if compressed==0 then payload=r:read(decompressed) else
@@ -612,8 +755,13 @@ local function parseRBXLBinary(data)
     for _,ch in ipairs(chunks.PROP) do
         local b=Buffer(ch.Data,false); local cid=b:readNumber("<I4"); local cls=classes[cid]; if not cls then return nil,"PROP class id tidak ditemukan: "..cid end
         local pname=basicTypes.String(b); local typeID=string.byte(b:read())
-        local vals=_decodePropertyArray(b,typeID,cls.Count,shared)
-        if vals then
+        local decodeOffset = b.Offset
+        local okVals, vals = pcall(_decodePropertyArray, b, typeID, cls.Count, shared)
+        if not okVals then
+            warn(("[HYAZ RBXL] skipped PROP: class=%s property=%s type=0x%02X offset=%d: %s"):format(tostring(cls.Name), tostring(pname), typeID or 0, decodeOffset, tostring(vals)))
+            -- PROP chunks are independent. Skip only this property instead of
+            -- aborting the entire RBXL import when Studio Lite lacks a decoder.
+        elseif vals then
             for i,ref in ipairs(cls.Refs) do
                 if nodes[ref] then
                     nodes[ref].Properties[pname]=vals[i]
@@ -1107,21 +1255,21 @@ local function importRBXL(path)
     return true, detail
 end
 
+
 -- ============================================================
--- ============================================================
--- RBXM-STYLE UI / V1.6
--- UI only: parser/import engine above remains unchanged.
+-- GUI
 -- ============================================================
 local UserInputService = game:GetService("UserInputService")
 
-local oldNames = {"HYAZ_RBXL_IMPORTER_V14", "HYAZ_RBXL_IMPORTER_V15", "HYAZ_RBXL_IMPORTER_V16"}
-for _, n in ipairs(oldNames) do
-    local old = GuiParent:FindFirstChild(n)
-    if old then old:Destroy() end
-end
+local old = GuiParent:FindFirstChild("HYAZ_RBXL_IMPORTER_V17")
+if old then old:Destroy() end
+old = GuiParent:FindFirstChild("HYAZ_RBXL_IMPORTER_V16")
+if old then old:Destroy() end
+old = GuiParent:FindFirstChild("HYAZ_RBXL_IMPORTER_V14")
+if old then old:Destroy() end
 
 local gui = Instance.new("ScreenGui")
-gui.Name = "HYAZ_RBXL_IMPORTER_V16"
+gui.Name = "HYAZ_RBXL_IMPORTER_V17"
 gui.ResetOnSpawn = false
 gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 gui.Parent = GuiParent
@@ -1220,7 +1368,7 @@ Badge.BorderSizePixel = 0
 Badge.Parent = Header
 round(Badge,8)
 stroke(Badge,Theme.accentDark,1,0.25)
-local BadgeText = makeLabel(Badge,"V1.6",UDim2.fromScale(1,1),UDim2.fromOffset(0,0),Enum.Font.GothamBold,8,Theme.accentSoft)
+local BadgeText = makeLabel(Badge,"V1.7",UDim2.fromScale(1,1),UDim2.fromOffset(0,0),Enum.Font.GothamBold,8,Theme.accentSoft)
 BadgeText.TextXAlignment = Enum.TextXAlignment.Center
 makeLabel(Header,"RBXL BINARY  •  DELTA WORKSPACE",UDim2.fromOffset(175,14),UDim2.fromOffset(105,36),Enum.Font.GothamMedium,7,Theme.muted)
 
@@ -1269,10 +1417,46 @@ stroke(CloseBtn,Theme.accentDark,1,0.2)
 
 local minimized = false
 local normalSize = Main.Size
+
+-- Compact crown button shown while minimized. The complete importer content
+-- is hidden so only a small draggable/restorable crown remains visible.
+local CrownBox = Instance.new("TextButton")
+CrownBox.Name = "HYAZ_CrownMini"
+CrownBox.Size = UDim2.fromOffset(50,50)
+CrownBox.Position = UDim2.fromOffset(4,4)
+CrownBox.BackgroundColor3 = Color3.fromRGB(30,10,16)
+CrownBox.BorderSizePixel = 0
+CrownBox.Text = "👑"
+CrownBox.TextColor3 = Theme.accentSoft
+CrownBox.Font = Enum.Font.GothamBold
+CrownBox.TextSize = 24
+CrownBox.Visible = false
+CrownBox.AutoButtonColor = true
+CrownBox.Parent = Main
+round(CrownBox,12)
+stroke(CrownBox,Theme.accent,1,0.15)
+
+local function setMinimized(state)
+    minimized = state
+    if minimized then
+        -- Hide every normal UI surface; the crown is the only visible element.
+        Header.Visible = false
+        Content.Visible = false
+        Main.Size = UDim2.fromOffset(58,58)
+        CrownBox.Visible = true
+    else
+        CrownBox.Visible = false
+        Main.Size = normalSize
+        Header.Visible = true
+        Content.Visible = true
+    end
+end
+
 MinBtn.Activated:Connect(function()
-    minimized = not minimized
-    Main.Size = minimized and UDim2.fromOffset(430,62) or normalSize
-    MinBtn.Text = minimized and "+" or "—"
+    setMinimized(true)
+end)
+CrownBox.Activated:Connect(function()
+    setMinimized(false)
 end)
 CloseBtn.Activated:Connect(function() gui:Destroy() end)
 
@@ -1304,6 +1488,30 @@ do
     end)
     UserInputService.InputEnded:Connect(function(input)
         if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then dragging = false end
+    end)
+end
+
+-- Crown drag: while minimized the small crown can still be moved.
+do
+    local dragging = false
+    local dragStart, startPos
+    CrownBox.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            dragging = true
+            dragStart = input.Position
+            startPos = Main.Position
+        end
+    end)
+    UserInputService.InputChanged:Connect(function(input)
+        if not dragging or not minimized then return end
+        if input.UserInputType ~= Enum.UserInputType.MouseMovement and input.UserInputType ~= Enum.UserInputType.Touch then return end
+        local delta = input.Position - dragStart
+        Main.Position = UDim2.new(startPos.X.Scale,startPos.X.Offset+delta.X,startPos.Y.Scale,startPos.Y.Offset+delta.Y)
+    end)
+    UserInputService.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            dragging = false
+        end
     end)
 end
 
@@ -1564,10 +1772,10 @@ scanFiles()
 
 -- Expose engine for the main HYAZ UI later without duplicating the parser.
 _G.HYAZ_RBXL_IMPORTER = {
-    Version = "V1.6",
+    Version = "V1.7",
     Parse = parseRBXLBinary,
     Import = importRBXL,
     Scan = collectRBXL,
 }
 
-print("[HYAZ RBXL IMPORTER V1.6] READY")
+print("[HYAZ RBXL IMPORTER V1.7] READY")
