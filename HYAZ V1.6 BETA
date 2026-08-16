@@ -1,7 +1,7 @@
 -- HYAZ // STABLE BUILD - KING HYAZ GLITCH LOADING
 --[[
                                                                             
-       Hyaz IMPORTER v62.0 - RBXM + RBXL BINARY BETA V1.5     
+       Hyaz IMPORTER v62.0 - RBXM + RBXL BINARY BETA V1.6     
        Features: Real-time UI Animations, Verified Asset Mapping            
        Supports: RBXM, RBXMX, RBXL, RBXLX                                   
                                                                             
@@ -36,6 +36,7 @@ end
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local HttpService = game:GetService("HttpService")
+local EncodingService = game:GetService("EncodingService")
 local UserInputService = game:GetService("UserInputService")
 local InsertService = game:GetService("InsertService")
 local CoreGui = game:GetService("CoreGui")
@@ -507,11 +508,10 @@ local function normalizeLoadedObjects(value)
 end
 
 -- ================================================================
--- HYAZ ULTIMATE V1.5 BETA // RBXL BINARY DECODER
+-- HYAZ ULTIMATE V1.6 BETA // RBXL BINARY DECODER
 -- ================================================================
--- V1.5 fixes two concrete problems from V1.4:
--- 1) ZSTD: Roblox's HttpService JSONDecode can decode a zbase64
---    buffer representation back into the original bytes.
+-- V1.6 fixes two concrete problems from V1.4:
+-- 1) ZSTD: V1.6 uses Roblox EncodingService:DecompressBuffer.
 -- 2) RBXL references are BYTE-INTERLEAVED + DELTA/ZIGZAG encoded;
 --    they are not independent big-endian integers.
 --
@@ -521,7 +521,7 @@ end
 
 local RBXL_BETA = {
     enabled = true,
-    version = "1.5-BETA",
+    version = "1.6-BETA",
     maxInstances = 50000,
 }
 
@@ -559,10 +559,16 @@ local function rbxl_ref_array(data, count)
 end
 
 local function rbxl_zstd_decode(body)
-    if type(rbxm_zstd) ~= "function" then
-        return nil, "internal ZSTD bridge tidak tersedia"
+    -- V1.6 incorrectly treated JSON buffer decoding as ZSTD decompression.
+    -- Roblox now exposes the actual ZSTD decoder through EncodingService.
+    if not EncodingService then
+        return nil, "EncodingService tidak tersedia"
     end
-    local ok, result = pcall(rbxm_zstd, body)
+    local ok, result = pcall(function()
+        local input = buffer.fromstring(body)
+        local output = EncodingService:DecompressBuffer(input, Enum.CompressionAlgorithm.Zstd)
+        return buffer.tostring(output)
+    end)
     if ok and type(result) == "string" then
         return result
     end
@@ -587,8 +593,7 @@ local function rbxl_try_decompress(body, expected)
     local candidates = {}
 
     if magic == string.char(0x28,0xB5,0x2F,0xFD) then
-        -- FIRST: use Roblox's own ZSTD implementation through the
-        -- JSON buffer bridge already present in this script.
+        -- FIRST: use Roblox's real ZSTD implementation.
         table.insert(candidates, function() return rbxl_zstd_decode(body) end)
 
         -- Optional executor bridges, if present.
@@ -632,7 +637,7 @@ local function rbxl_try_decompress(body, expected)
     end
 
     if magic == string.char(0x28,0xB5,0x2F,0xFD) then
-        return nil, "ZSTD gagal: "..lastError
+        return nil, "ZSTD gagal: "..lastError.." | EncodingService DecompressBuffer diperlukan"
     end
     return nil, "LZ4 gagal: "..lastError
 end
@@ -736,7 +741,7 @@ local function rbxl_parse_prop(chunk, model)
     local n = class.size
     local values = {}
 
-    -- V1.5 intentionally decodes the most useful/common property types first.
+    -- V1.6 intentionally decodes the most useful/common property types first.
     if typeId == 0x01 then
         for i=1,n do values[i]=basicTypes.String(b) end
     elseif typeId == 0x02 then
