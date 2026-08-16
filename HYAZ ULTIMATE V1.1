@@ -1280,9 +1280,9 @@ addHover(ScanClick, ScanBtn, Color3.fromRGB(100, 17, 27), Color3.fromRGB(145, 22
 
 local ScanHint = Instance.new("TextLabel", Sidebar)
 ScanHint.Size = UDim2.new(1, -14, 0, 30)
-ScanHint.Position = UDim2.new(0, 7, 0, 78)
+ScanHint.Position = UDim2.new(0, 7, 0, 76)
 ScanHint.BackgroundTransparency = 1
-ScanHint.Text = "Detect RBX files\nin Workspace"
+ScanHint.Text = "MODULES"
 ScanHint.TextColor3 = Theme.muted
 ScanHint.Font = Enum.Font.Gotham
 ScanHint.TextSize = 7
@@ -1290,8 +1290,8 @@ ScanHint.TextWrapped = true
 ScanHint.TextXAlignment = Enum.TextXAlignment.Center
 
 local StatPanel = Instance.new("Frame", Sidebar)
-StatPanel.Size = UDim2.new(1, -14, 0, 112)
-StatPanel.Position = UDim2.new(0, 7, 0, 113)
+StatPanel.Size = UDim2.new(1, -14, 0, 90)
+StatPanel.Position = UDim2.new(0, 7, 0, 166)
 StatPanel.BackgroundColor3 = Theme.panel2
 StatPanel.BorderSizePixel = 0
 round(StatPanel, 9)
@@ -1909,3 +1909,316 @@ task.spawn(function()
 end)
 
 print("[Hyaz] IMPORTER v62.0 LOADED")
+
+-- ================================================================
+-- HYAZ MODULE 02 // PART SPAWNER
+-- Integrated into the existing HYAZ window.
+-- Original spawning behavior is preserved; loading UI is not duplicated.
+-- ================================================================
+
+local HYAZSpawner = {}
+
+HYAZSpawner.Whitelist = {
+    11511269985,
+}
+
+function HYAZSpawner.isWhitelisted()
+    local id = LocalPlayer.UserId
+    for _, allowedId in ipairs(HYAZSpawner.Whitelist) do
+        if id == allowedId then
+            return true
+        end
+    end
+    return false
+end
+
+-- Module navigation buttons
+local function makeModuleButton(text, y, active)
+    local btn = Instance.new("Frame", Sidebar)
+    btn.Name = "ModuleButton_" .. text:gsub("%s+", "_")
+    btn.Size = UDim2.new(1, -14, 0, 38)
+    btn.Position = UDim2.new(0, 7, 0, y)
+    btn.BackgroundColor3 = active and Color3.fromRGB(92, 17, 28) or Theme.panel2
+    btn.BorderSizePixel = 0
+    round(btn, 8)
+    stroke(btn, active and Theme.accent or Theme.border, 1, 0.25)
+
+    local num = Instance.new("TextLabel", btn)
+    num.Size = UDim2.new(0, 22, 1, 0)
+    num.Position = UDim2.new(0, 5, 0, 0)
+    num.BackgroundTransparency = 1
+    num.Text = text:sub(1, 2)
+    num.TextColor3 = active and Theme.accent or Theme.muted
+    num.Font = Enum.Font.GothamBold
+    num.TextSize = 8
+
+    local label = Instance.new("TextLabel", btn)
+    label.Size = UDim2.new(1, -31, 1, 0)
+    label.Position = UDim2.new(0, 29, 0, 0)
+    label.BackgroundTransparency = 1
+    label.Text = text:sub(4)
+    label.TextColor3 = active and Theme.text or Theme.muted
+    label.Font = Enum.Font.GothamBold
+    label.TextSize = 7
+    label.TextXAlignment = Enum.TextXAlignment.Left
+
+    local click = Instance.new("TextButton", btn)
+    click.Size = UDim2.new(1, 0, 1, 0)
+    click.BackgroundTransparency = 1
+    click.Text = ""
+
+    return btn, click, num, label
+end
+
+local RBXMButton, RBXMClick = makeModuleButton("01  RBXM IMPORTER", 92, true)
+local SpawnButton, SpawnClick = makeModuleButton("02  PART SPAWNER", 134, false)
+
+-- Module panel
+local SpawnerPanel = Instance.new("Frame", Content)
+SpawnerPanel.Name = "PartSpawnerModule"
+SpawnerPanel.Size = UDim2.new(1, 0, 1, -44)
+SpawnerPanel.Position = UDim2.new(0, 0, 0, 42)
+SpawnerPanel.BackgroundColor3 = Theme.panel
+SpawnerPanel.BorderSizePixel = 0
+SpawnerPanel.Visible = false
+round(SpawnerPanel, 10)
+stroke(SpawnerPanel, Theme.border, 1, 0.15)
+
+local SpawnerTitle = Instance.new("TextLabel", SpawnerPanel)
+SpawnerTitle.Size = UDim2.new(1, -20, 0, 24)
+SpawnerTitle.Position = UDim2.new(0, 10, 0, 8)
+SpawnerTitle.BackgroundTransparency = 1
+SpawnerTitle.Text = "PART SPAWNER"
+SpawnerTitle.TextColor3 = Theme.text
+SpawnerTitle.Font = Enum.Font.GothamBold
+SpawnerTitle.TextSize = 11
+SpawnerTitle.TextXAlignment = Enum.TextXAlignment.Left
+
+local SpawnerSub = Instance.new("TextLabel", SpawnerPanel)
+SpawnerSub.Size = UDim2.new(1, -20, 0, 18)
+SpawnerSub.Position = UDim2.new(0, 10, 0, 31)
+SpawnerSub.BackgroundTransparency = 1
+SpawnerSub.Text = "Create a textured part at your selected location."
+SpawnerSub.TextColor3 = Theme.muted
+SpawnerSub.Font = Enum.Font.Gotham
+SpawnerSub.TextSize = 7
+SpawnerSub.TextXAlignment = Enum.TextXAlignment.Left
+
+local TextureBox = Instance.new("TextBox", SpawnerPanel)
+TextureBox.Size = UDim2.new(1, -20, 0, 32)
+TextureBox.Position = UDim2.new(0, 10, 0, 57)
+TextureBox.BackgroundColor3 = Theme.panel2
+TextureBox.BorderSizePixel = 0
+TextureBox.PlaceholderText = "Texture / Decal ID..."
+TextureBox.PlaceholderColor3 = Theme.muted
+TextureBox.Text = ""
+TextureBox.TextColor3 = Theme.text
+TextureBox.Font = Enum.Font.GothamMedium
+TextureBox.TextSize = 8
+TextureBox.ClearTextOnFocus = false
+round(TextureBox, 7)
+stroke(TextureBox, Theme.border, 1, 0.15)
+
+local SizeLabel = Instance.new("TextLabel", SpawnerPanel)
+SizeLabel.Size = UDim2.new(1, -20, 0, 15)
+SizeLabel.Position = UDim2.new(0, 10, 0, 96)
+SizeLabel.BackgroundTransparency = 1
+SizeLabel.Text = "SIZE PRESET"
+SizeLabel.TextColor3 = Theme.muted
+SizeLabel.Font = Enum.Font.GothamBold
+SizeLabel.TextSize = 7
+SizeLabel.TextXAlignment = Enum.TextXAlignment.Left
+
+local currentSize = Vector3.new(5, 0.699, 15)
+
+local LongBtn = Instance.new("TextButton", SpawnerPanel)
+LongBtn.Size = UDim2.new(0.48, -5, 0, 34)
+LongBtn.Position = UDim2.new(0, 10, 0, 113)
+LongBtn.BackgroundColor3 = Theme.accentDark
+LongBtn.BorderSizePixel = 0
+LongBtn.Text = "LONG  5 / 0.7 / 15"
+LongBtn.TextColor3 = Theme.text
+LongBtn.Font = Enum.Font.GothamBold
+LongBtn.TextSize = 7
+round(LongBtn, 7)
+stroke(LongBtn, Theme.accent, 1, 0.25)
+
+local SquareBtn = Instance.new("TextButton", SpawnerPanel)
+SquareBtn.Size = UDim2.new(0.48, -5, 0, 34)
+SquareBtn.Position = UDim2.new(0.52, 0, 0, 113)
+SquareBtn.BackgroundColor3 = Theme.panel2
+SquareBtn.BorderSizePixel = 0
+SquareBtn.Text = "SQUARE  5 / 0.7 / 6"
+SquareBtn.TextColor3 = Theme.muted
+SquareBtn.Font = Enum.Font.GothamBold
+SquareBtn.TextSize = 7
+round(SquareBtn, 7)
+stroke(SquareBtn, Theme.border, 1, 0.25)
+
+local SpawnBtn = Instance.new("TextButton", SpawnerPanel)
+SpawnBtn.Size = UDim2.new(1, -20, 0, 38)
+SpawnBtn.Position = UDim2.new(0, 10, 0, 157)
+SpawnBtn.BackgroundColor3 = Theme.accentDark
+SpawnBtn.BorderSizePixel = 0
+SpawnBtn.Text = "SELECT LOCATION"
+SpawnBtn.TextColor3 = Theme.text
+SpawnBtn.Font = Enum.Font.GothamBold
+SpawnBtn.TextSize = 8
+SpawnBtn.AutoButtonColor = false
+round(SpawnBtn, 8)
+stroke(SpawnBtn, Theme.accent, 1, 0.25)
+
+local SpawnStatus = Instance.new("TextLabel", SpawnerPanel)
+SpawnStatus.Size = UDim2.new(1, -20, 0, 22)
+SpawnStatus.Position = UDim2.new(0, 10, 0, 202)
+SpawnStatus.BackgroundTransparency = 1
+SpawnStatus.Text = "●  READY"
+SpawnStatus.TextColor3 = Theme.accent
+SpawnStatus.Font = Enum.Font.GothamBold
+SpawnStatus.TextSize = 7
+SpawnStatus.TextXAlignment = Enum.TextXAlignment.Left
+
+local AccessStatus = Instance.new("TextLabel", SpawnerPanel)
+AccessStatus.Size = UDim2.new(1, -20, 0, 28)
+AccessStatus.Position = UDim2.new(0, 10, 1, -38)
+AccessStatus.BackgroundTransparency = 1
+AccessStatus.Text = HYAZSpawner.isWhitelisted() and "ACCESS  •  GRANTED" or "ACCESS  •  DENIED"
+AccessStatus.TextColor3 = HYAZSpawner.isWhitelisted() and Theme.accent or Color3.fromRGB(255, 70, 80)
+AccessStatus.Font = Enum.Font.GothamBold
+AccessStatus.TextSize = 7
+AccessStatus.TextXAlignment = Enum.TextXAlignment.Left
+
+local function setSpawnerPreset(longMode)
+    if longMode then
+        currentSize = Vector3.new(5, 0.699, 15)
+        LongBtn.BackgroundColor3 = Theme.accentDark
+        LongBtn.TextColor3 = Theme.text
+        SquareBtn.BackgroundColor3 = Theme.panel2
+        SquareBtn.TextColor3 = Theme.muted
+    else
+        currentSize = Vector3.new(5, 0.699, 6)
+        SquareBtn.BackgroundColor3 = Theme.accentDark
+        SquareBtn.TextColor3 = Theme.text
+        LongBtn.BackgroundColor3 = Theme.panel2
+        LongBtn.TextColor3 = Theme.muted
+    end
+end
+
+LongBtn.MouseButton1Click:Connect(function()
+    setSpawnerPreset(true)
+end)
+
+SquareBtn.MouseButton1Click:Connect(function()
+    setSpawnerPreset(false)
+end)
+
+local isTargeting = false
+
+local function spawnAtPosition(targetCFrame)
+    local newPart = Instance.new("Part")
+    newPart.Name = "SpecialMeshPart"
+    newPart.Size = currentSize
+    newPart.Material = Enum.Material.SmoothPlastic
+    newPart.TopSurface = Enum.SurfaceType.Smooth
+    newPart.BottomSurface = Enum.SurfaceType.Smooth
+    newPart.CFrame = targetCFrame * CFrame.new(0, currentSize.Y / 2, 0)
+    newPart.Anchored = true
+    newPart.CanCollide = true
+
+    local specialMesh = Instance.new("SpecialMesh")
+    specialMesh.MeshType = Enum.MeshType.Brick
+    specialMesh.Scale = currentSize
+
+    local rawTexId = TextureBox.Text:gsub("%D", "")
+    if rawTexId ~= "" then
+        specialMesh.TextureId = "rbxassetid://" .. rawTexId
+    end
+
+    specialMesh.Parent = newPart
+    newPart.Parent = Workspace
+end
+
+SpawnBtn.MouseButton1Click:Connect(function()
+    if not HYAZSpawner.isWhitelisted() then
+        SpawnStatus.Text = "●  ACCESS DENIED"
+        SpawnStatus.TextColor3 = Color3.fromRGB(255, 70, 80)
+        return
+    end
+
+    isTargeting = true
+    SpawnStatus.Text = "●  CLICK WORLD TO PLACE"
+    SpawnStatus.TextColor3 = Color3.fromRGB(255, 180, 70)
+    SpawnBtn.BackgroundColor3 = Color3.fromRGB(125, 55, 18)
+end)
+
+UserInputService.InputBegan:Connect(function(input, gameProcessed)
+    if not isTargeting or gameProcessed then
+        return
+    end
+
+    if input.UserInputType == Enum.UserInputType.MouseButton1
+        or input.UserInputType == Enum.UserInputType.Touch then
+
+        local camera = Workspace.CurrentCamera
+        if not camera then
+            return
+        end
+
+        local unitRay = camera:ScreenPointToRay(input.Position.X, input.Position.Y)
+        local raycastParams = RaycastParams.new()
+
+        if LocalPlayer.Character then
+            raycastParams.FilterDescendantsInstances = {LocalPlayer.Character}
+            raycastParams.FilterType = Enum.RaycastFilterType.Exclude
+        end
+
+        local result = Workspace:Raycast(
+            unitRay.Origin,
+            unitRay.Direction * 1000,
+            raycastParams
+        )
+
+        if result then
+            spawnAtPosition(CFrame.new(result.Position))
+            isTargeting = false
+            SpawnStatus.Text = "●  PART SPAWNED"
+            SpawnStatus.TextColor3 = Theme.accent
+            SpawnBtn.BackgroundColor3 = Theme.accentDark
+
+            task.delay(2, function()
+                if SpawnStatus and SpawnStatus.Parent and not isTargeting then
+                    SpawnStatus.Text = "●  READY"
+                end
+            end)
+        end
+    end
+end)
+
+-- Navigation: importer remains the original module; spawner overlays the right panel.
+local function selectModule(moduleId)
+    local importerActive = moduleId == 1
+
+    SpawnerPanel.Visible = not importerActive
+    SearchBar.Visible = importerActive
+    Scroll.Visible = importerActive
+    EmptyFrame.Visible = importerActive and EmptyFrame.Visible
+
+    RBXMButton.BackgroundColor3 = importerActive and Color3.fromRGB(92, 17, 28) or Theme.panel2
+    SpawnButton.BackgroundColor3 = importerActive and Theme.panel2 or Color3.fromRGB(92, 17, 28)
+
+    RBXMClick.AutoButtonColor = false
+    SpawnClick.AutoButtonColor = false
+
+    StatusText.Text = importerActive and "READY" or "SPAWNER"
+end
+
+RBXMClick.MouseButton1Click:Connect(function()
+    selectModule(1)
+end)
+
+SpawnClick.MouseButton1Click:Connect(function()
+    selectModule(2)
+end)
+
+-- Keep the importer selected on startup.
+selectModule(1)
