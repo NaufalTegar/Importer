@@ -1,6 +1,7 @@
--- HYAZ // KING HYAZ GLITCH REVEAL BUILD 2026-08-17\n--[[
+-- HYAZ // STABLE BUILD - KING HYAZ GLITCH LOADING
+--[[
                                                                             
-       Hyaz IMPORTER v1.0 - Dynamic Animated Gradient & Vector Icons     
+       Hyaz IMPORTER v62.0 - Dynamic Animated Gradient & Vector Icons     
        Features: Real-time UI Animations, Verified Asset Mapping            
        Supports: RBXM, RBXL, RBXLX, RBXMX                                   
                                                                             
@@ -650,40 +651,36 @@ for col = 1, COLUMN_COUNT do
     })
 end
 
--- CENTER: KING Hyaz text   no stroke, no background, text only + decorative elements
+-- CENTER: KING HYAZ glitch/reveal loading
 local CenterContainer = Instance.new("Frame", LoadingScreen)
-CenterContainer.Size = UDim2.new(0, 500, 0, 220)
-CenterContainer.Position = UDim2.new(0.5, -250, 0.5, -110)
+CenterContainer.Size = UDim2.new(0, 620, 0, 250)
+CenterContainer.Position = UDim2.new(0.5, -310, 0.5, -125)
 CenterContainer.BackgroundTransparency = 1
 CenterContainer.ZIndex = 1001
 
--- Top decorative line
 local TopLine = Instance.new("TextLabel", CenterContainer)
 TopLine.Size = UDim2.new(1, 0, 0, 20)
 TopLine.Position = UDim2.new(0, 0, 0, 0)
 TopLine.BackgroundTransparency = 1
-TopLine.Text = string.char(226,148,128,226,148,128,32,226,151,136,32,226,148,128,226,148,128,226,148,128)..string.char(226,148,128,226,148,128,226,148,128,226,148,128,226,148,128,226,148,128,226,148)..string.char(128,226,148,128,226,148,128,226,148,128,226,148,128,226,148,128,226,148,128,226)..string.char(148,128,226,148,128,226,148,128,226,148,128,226,148,128,226,148,128,32,226,151)..string.char(136,32,226,148,128,226,148,128)
+TopLine.Text = "────── ◈ ───────────────────────── ◈ ──────"
 TopLine.TextColor3 = Color3.fromRGB(255, 40, 55)
 TopLine.Font = Enum.Font.Code
 TopLine.TextSize = 13
 TopLine.ZIndex = 1001
 
--- Hacker terminal boot marker
 local BootMarker = Instance.new("TextLabel", CenterContainer)
-BootMarker.Size = UDim2.new(1, 0, 0, 38)
-BootMarker.Position = UDim2.new(0, 0, 0, 22)
+BootMarker.Size = UDim2.new(1, 0, 0, 30)
+BootMarker.Position = UDim2.new(0, 0, 0, 25)
 BootMarker.BackgroundTransparency = 1
-BootMarker.Text = "[ SECURE BOOT // Hyaz NODE ]"
+BootMarker.Text = "[ SECURE BOOT // HYAZ NODE ]"
 BootMarker.TextColor3 = Color3.fromRGB(255, 105, 115)
 BootMarker.Font = Enum.Font.Code
 BootMarker.TextSize = 12
 BootMarker.ZIndex = 1001
 
--- Main KING HYAZ text
--- Reveal effect: random/glitch characters -> real character, one by one.
 local KingText = Instance.new("TextLabel", CenterContainer)
-KingText.Size = UDim2.new(1, 0, 0, 62)
-KingText.Position = UDim2.new(0, 0, 0, 62)
+KingText.Size = UDim2.new(1, 0, 0, 70)
+KingText.Position = UDim2.new(0, 0, 0, 58)
 KingText.BackgroundTransparency = 1
 KingText.Text = "########"
 KingText.TextColor3 = Color3.fromRGB(255, 25, 45)
@@ -692,7 +689,7 @@ KingText.TextSize = 54
 KingText.ZIndex = 1001
 
 local RevealTarget = "KING HYAZ"
-local RevealChars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789@#$%&*!?XZ"
+local RevealChars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789@#$%&*!?"
 local RevealFinished = false
 
 local function randomRevealChar()
@@ -703,11 +700,11 @@ end
 local function buildRevealText(lockedCount)
     local result = {}
     for i = 1, #RevealTarget do
-        local targetChar = RevealTarget:sub(i, i)
-        if targetChar == " " then
+        local target = RevealTarget:sub(i, i)
+        if target == " " then
             result[i] = " "
         elseif i <= lockedCount then
-            result[i] = targetChar
+            result[i] = target
         else
             result[i] = randomRevealChar()
         end
@@ -715,38 +712,39 @@ local function buildRevealText(lockedCount)
     return table.concat(result)
 end
 
--- Real character reveal sequence.
--- Each character rapidly glitches before locking into the correct letter.
 task.spawn(function()
-    math.randomseed(os.clock() * 1000000)
-
+    math.randomseed(math.floor(os.clock() * 1000000))
     KingText.Text = buildRevealText(0)
 
     for locked = 1, #RevealTarget do
-        local targetChar = RevealTarget:sub(locked, locked)
+        local target = RevealTarget:sub(locked, locked)
 
-        if targetChar == " " then
+        if target == " " then
             KingText.Text = buildRevealText(locked)
-            task.wait(0.10)
+            task.wait(0.12)
         else
-            for glitch = 1, 7 do
+            for glitch = 1, 9 do
                 KingText.Text = buildRevealText(locked - 1)
-                KingText.TextColor3 = (glitch % 2 == 0)
+                KingText.TextColor3 =
+                    (glitch % 2 == 0)
                     and Color3.fromRGB(255, 35, 55)
-                    or Color3.fromRGB(255, 110, 120)
+                    or Color3.fromRGB(255, 120, 130)
+
+                KingText.Position = UDim2.new(
+                    0, math.random(-3, 3),
+                    0, 58 + math.random(-1, 1)
+                )
+
                 task.wait(0.045)
             end
 
-            -- Lock the real character.
             KingText.Text = buildRevealText(locked)
-            KingText.TextColor3 = Color3.fromRGB(255, 25, 45)
+            KingText.TextColor3 = Color3.fromRGB(255, 220, 220)
+            KingText.Position = UDim2.new(0, 0, 0, 58)
+            task.wait(0.045)
 
-            -- Tiny reveal flash.
-            local originalPos = KingText.Position
-            KingText.Position = originalPos + UDim2.new(0, math.random(-2, 2), 0, 0)
-            task.wait(0.035)
-            KingText.Position = originalPos
-            task.wait(0.11)
+            KingText.TextColor3 = Color3.fromRGB(255, 35, 50)
+            task.wait(0.12)
         end
     end
 
@@ -755,10 +753,9 @@ task.spawn(function()
     RevealFinished = true
 end)
 
--- Tagline below
 local TagLine = Instance.new("TextLabel", CenterContainer)
 TagLine.Size = UDim2.new(1, 0, 0, 22)
-TagLine.Position = UDim2.new(0, 0, 0, 126)
+TagLine.Position = UDim2.new(0, 0, 0, 133)
 TagLine.BackgroundTransparency = 1
 TagLine.Text = "[ RBXM IMPORTER SYSTEM INITIALIZED ]"
 TagLine.TextColor3 = Color3.fromRGB(220, 25, 40)
@@ -766,29 +763,26 @@ TagLine.Font = Enum.Font.Code
 TagLine.TextSize = 13
 TagLine.ZIndex = 1001
 
--- Progress dots / loading indicator
 local LoadDots = Instance.new("TextLabel", CenterContainer)
 LoadDots.Size = UDim2.new(1, 0, 0, 20)
-LoadDots.Position = UDim2.new(0, 0, 0, 152)
+LoadDots.Position = UDim2.new(0, 0, 0, 160)
 LoadDots.BackgroundTransparency = 1
-LoadDots.Text = "loading . . ."
+LoadDots.Text = "loading ."
 LoadDots.TextColor3 = Color3.fromRGB(180, 18, 32)
 LoadDots.Font = Enum.Font.Code
 LoadDots.TextSize = 12
 LoadDots.ZIndex = 1001
 
--- Bottom decorative line
 local BotLine = Instance.new("TextLabel", CenterContainer)
 BotLine.Size = UDim2.new(1, 0, 0, 20)
-BotLine.Position = UDim2.new(0, 0, 0, 196)
+BotLine.Position = UDim2.new(0, 0, 0, 202)
 BotLine.BackgroundTransparency = 1
-BotLine.Text = string.char(226,148,128,226,148,128,32,226,151,136,32,226,148,128,226,148,128,226,148,128)..string.char(226,148,128,226,148,128,226,148,128,226,148,128,226,148,128,226,148,128,226,148)..string.char(128,226,148,128,226,148,128,226,148,128,226,148,128,226,148,128,226,148,128,226)..string.char(148,128,226,148,128,226,148,128,226,148,128,226,148,128,226,148,128,32,226,151)..string.char(136,32,226,148,128,226,148,128)
+BotLine.Text = "────── ◈ ───────────────────────── ◈ ──────"
 BotLine.TextColor3 = Color3.fromRGB(255, 40, 55)
 BotLine.Font = Enum.Font.Code
 BotLine.TextSize = 13
 BotLine.ZIndex = 1001
 
--- Animate matrix rain + loading dots in a single loop
 local loadingActive = true
 local dotStates = {"loading .     ", "loading . .   ", "loading . . . "}
 local dotIndex = 0
@@ -800,17 +794,15 @@ matrixConnection = RunService.RenderStepped:Connect(function(dt)
         return
     end
 
-    -- Update matrix columns
     for _, col in ipairs(columns) do
         col.y = col.y + col.speed * dt
-        -- Reposition frame
         col.frame.Position = UDim2.new(col.frame.Position.X.Scale, 0, 0, col.y)
-        -- Reset when fully off bottom
+
         if col.y > 700 + col.streamLength * 18 then
             col.y = math.random(-600, -80)
             col.speed = math.random(180, 420)
         end
-        -- Randomize characters periodically
+
         col.charTimer = col.charTimer + dt
         if col.charTimer >= col.charInterval then
             col.charTimer = 0
@@ -822,51 +814,42 @@ matrixConnection = RunService.RenderStepped:Connect(function(dt)
     end
 end)
 
--- Loading dot animation + subtle pulse while the reveal is running
 task.spawn(function()
-    local tick = 0
     while loadingActive do
-        task.wait(0.35)
-        dotIndex = (dotIndex % 3) + 1
+        task.wait(0.30)
+        dotIndex = (dotIndex % #dotStates) + 1
         LoadDots.Text = dotStates[dotIndex]
-
-        if not RevealFinished then
-            tick = tick + 1
-            if tick % 2 == 0 then
-                KingText.TextColor3 = Color3.fromRGB(255, 25, 45)
-            else
-                KingText.TextColor3 = Color3.fromRGB(255, 70, 85)
-            end
-        end
     end
 end)
 
--- Wait for the KING HYAZ reveal to actually finish.
--- This replaces the old fixed 2.8 second timeout so the animation
--- can never be cut off halfway.
 task.spawn(function()
-    local timeout = 0
-    while not RevealFinished and timeout < 6 do
-        task.wait(0.1)
-        timeout = timeout + 0.1
+    while not RevealFinished do
+        task.wait(0.05)
     end
 
     task.wait(0.65)
     loadingActive = false
-    -- Fade out loading screen
+
     for i = 1, 20 do
-        LoadingScreen.BackgroundTransparency = i / 20
+        local alpha = i / 20
+        LoadingScreen.BackgroundTransparency = alpha
+
         for _, obj in ipairs(LoadingScreen:GetDescendants()) do
             if obj:IsA("TextLabel") then
-                obj.TextTransparency = i / 20
+                obj.TextTransparency = alpha
+            elseif obj:IsA("ImageLabel") then
+                obj.ImageTransparency = alpha
             end
         end
+
         task.wait(0.025)
     end
-    LoadingScreen:Destroy()
+
+    if LoadingScreen and LoadingScreen.Parent then
+        LoadingScreen:Destroy()
+    end
 end)
 
---                                                                        
 -- RenderStepped Animation Engine (60 FPS Smooth Movement)
 --                                                                        
 RunService.RenderStepped:Connect(function(deltaTime)
@@ -1110,7 +1093,7 @@ local TitleText = Instance.new("TextLabel", TitleBar)
 TitleText.Size = UDim2.new(0, 150, 0, 18)
 TitleText.Position = UDim2.new(0, 49, 0, 7)
 TitleText.BackgroundTransparency = 1
-TitleText.Text = "HYAZ"
+TitleText.Text = "HYAZ IMPORTER"
 TitleText.TextColor3 = Theme.text
 TitleText.Font = Enum.Font.GothamBold
 TitleText.TextSize = 13
@@ -1127,7 +1110,7 @@ stroke(VersionBadge, Theme.accentDark, 1, 0.25)
 local VersionText = Instance.new("TextLabel", VersionBadge)
 VersionText.Size = UDim2.new(1, 0, 1, 0)
 VersionText.BackgroundTransparency = 1
-VersionText.Text = "v1.0"
+VersionText.Text = "v62.0"
 VersionText.TextColor3 = Theme.accentSoft
 VersionText.Font = Enum.Font.GothamBold
 VersionText.TextSize = 8
@@ -1136,7 +1119,7 @@ local Subtitle = Instance.new("TextLabel", TitleBar)
 Subtitle.Size = UDim2.new(0, 190, 0, 14)
 Subtitle.Position = UDim2.new(0, 49, 0, 28)
 Subtitle.BackgroundTransparency = 1
-Subtitle.Text = "UNIVERSAL TOOLKIT  •  READY"
+Subtitle.Text = "RBXM / RBXL  •  IMPORTER READY"
 Subtitle.TextColor3 = Theme.muted
 Subtitle.Font = Enum.Font.GothamMedium
 Subtitle.TextSize = 7
@@ -1266,7 +1249,7 @@ SideTitle.TextXAlignment = Enum.TextXAlignment.Left
 
 local ScanBtn = Instance.new("Frame", Sidebar)
 ScanBtn.Size = UDim2.new(1, -14, 0, 40)
-ScanBtn.Position = UDim2.new(0, 7, 0, 126)
+ScanBtn.Position = UDim2.new(0, 7, 0, 34)
 ScanBtn.BackgroundColor3 = Color3.fromRGB(100, 17, 27)
 ScanBtn.BorderSizePixel = 0
 round(ScanBtn, 8)
@@ -1297,7 +1280,7 @@ addHover(ScanClick, ScanBtn, Color3.fromRGB(100, 17, 27), Color3.fromRGB(145, 22
 
 local ScanHint = Instance.new("TextLabel", Sidebar)
 ScanHint.Size = UDim2.new(1, -14, 0, 30)
-ScanHint.Position = UDim2.new(0, 7, 0, 170)
+ScanHint.Position = UDim2.new(0, 7, 0, 78)
 ScanHint.BackgroundTransparency = 1
 ScanHint.Text = "Detect RBX files\nin Workspace"
 ScanHint.TextColor3 = Theme.muted
@@ -1308,7 +1291,7 @@ ScanHint.TextXAlignment = Enum.TextXAlignment.Center
 
 local StatPanel = Instance.new("Frame", Sidebar)
 StatPanel.Size = UDim2.new(1, -14, 0, 112)
-StatPanel.Position = UDim2.new(0, 7, 0, 205)
+StatPanel.Position = UDim2.new(0, 7, 0, 113)
 StatPanel.BackgroundColor3 = Theme.panel2
 StatPanel.BorderSizePixel = 0
 round(StatPanel, 9)
@@ -1374,7 +1357,7 @@ local BrandText = Instance.new("TextLabel", BrandPanel)
 BrandText.Size = UDim2.new(1, -30, 1, 0)
 BrandText.Position = UDim2.new(0, 28, 0, 0)
 BrandText.BackgroundTransparency = 1
-BrandText.Text = "HYAZ"
+BrandText.Text = "KING HYAZ"
 BrandText.TextColor3 = Theme.accent
 BrandText.Font = Enum.Font.GothamBold
 BrandText.TextSize = 8
@@ -1385,219 +1368,6 @@ local Content = Instance.new("Frame", Body)
 Content.Size = UDim2.new(1, -110, 1, -8)
 Content.Position = UDim2.new(0, 110, 0, 0)
 Content.BackgroundTransparency = 1
-
--- ================================================================
--- HYAZ MODULE NAVIGATION
--- Module 01 = RBXM Importer (existing logic)
--- Module 02 = Part Spawner (integrated from second script)
--- ================================================================
-local Module1Btn = Instance.new("TextButton", Sidebar)
-Module1Btn.Size = UDim2.new(1, -14, 0, 38)
-Module1Btn.Position = UDim2.new(0, 7, 0, 32)
-Module1Btn.BackgroundColor3 = Color3.fromRGB(100, 17, 27)
-Module1Btn.BorderSizePixel = 0
-Module1Btn.Text = "01  RBXM IMPORTER"
-Module1Btn.TextColor3 = Theme.text
-Module1Btn.Font = Enum.Font.GothamBold
-Module1Btn.TextSize = 8
-Module1Btn.TextXAlignment = Enum.TextXAlignment.Left
-padding(Module1Btn, 0, 0, 0, 10)
-round(Module1Btn, 8)
-stroke(Module1Btn, Theme.accent, 1, 0.25)
-
-local Module2Btn = Instance.new("TextButton", Sidebar)
-Module2Btn.Size = UDim2.new(1, -14, 0, 38)
-Module2Btn.Position = UDim2.new(0, 7, 0, 76)
-Module2Btn.BackgroundColor3 = Theme.panel3
-Module2Btn.BorderSizePixel = 0
-Module2Btn.Text = "02  PART SPAWNER"
-Module2Btn.TextColor3 = Theme.muted
-Module2Btn.Font = Enum.Font.GothamBold
-Module2Btn.TextSize = 8
-Module2Btn.TextXAlignment = Enum.TextXAlignment.Left
-padding(Module2Btn, 0, 0, 0, 10)
-round(Module2Btn, 8)
-stroke(Module2Btn, Theme.border, 1, 0.2)
-
-addHover(Module1Btn, Module1Btn, Color3.fromRGB(100,17,27), Color3.fromRGB(140,22,36))
-addHover(Module2Btn, Module2Btn, Theme.panel3, Color3.fromRGB(35,28,35))
-
--- MODULE 02 PANEL
-local Spawner = Instance.new("Frame", Content)
-Spawner.Name = "PartSpawnerModule"
-Spawner.Size = UDim2.new(1, 0, 1, 0)
-Spawner.BackgroundTransparency = 1
-Spawner.Visible = false
-
-local SpawnTitle = Instance.new("TextLabel", Spawner)
-SpawnTitle.Size = UDim2.new(1, 0, 0, 28)
-SpawnTitle.Position = UDim2.new(0, 0, 0, 0)
-SpawnTitle.BackgroundTransparency = 1
-SpawnTitle.Text = "PART SPAWNER"
-SpawnTitle.TextColor3 = Theme.text
-SpawnTitle.Font = Enum.Font.GothamBold
-SpawnTitle.TextSize = 13
-SpawnTitle.TextXAlignment = Enum.TextXAlignment.Left
-
-local SpawnSub = Instance.new("TextLabel", Spawner)
-SpawnSub.Size = UDim2.new(1, 0, 0, 18)
-SpawnSub.Position = UDim2.new(0, 0, 0, 25)
-SpawnSub.BackgroundTransparency = 1
-SpawnSub.Text = "Create and place a textured part in the world"
-SpawnSub.TextColor3 = Theme.muted
-SpawnSub.Font = Enum.Font.Gotham
-SpawnSub.TextSize = 8
-SpawnSub.TextXAlignment = Enum.TextXAlignment.Left
-
-local TextureBox2 = Instance.new("TextBox", Spawner)
-TextureBox2.Size = UDim2.new(1, 0, 0, 38)
-TextureBox2.Position = UDim2.new(0, 0, 0, 58)
-TextureBox2.BackgroundColor3 = Theme.panel2
-TextureBox2.BorderSizePixel = 0
-TextureBox2.PlaceholderText = "Texture / Decal ID"
-TextureBox2.PlaceholderColor3 = Theme.muted
-TextureBox2.Text = ""
-TextureBox2.TextColor3 = Theme.text
-TextureBox2.Font = Enum.Font.GothamMedium
-TextureBox2.TextSize = 9
-TextureBox2.ClearTextOnFocus = false
-round(TextureBox2, 8)
-stroke(TextureBox2, Theme.border, 1, 0.1)
-padding(TextureBox2, 0, 10, 0, 10)
-
-local SizeLabel2 = Instance.new("TextLabel", Spawner)
-SizeLabel2.Size = UDim2.new(1, 0, 0, 16)
-SizeLabel2.Position = UDim2.new(0, 0, 0, 104)
-SizeLabel2.BackgroundTransparency = 1
-SizeLabel2.Text = "SIZE PRESET"
-SizeLabel2.TextColor3 = Theme.muted
-SizeLabel2.Font = Enum.Font.GothamBold
-SizeLabel2.TextSize = 7
-SizeLabel2.TextXAlignment = Enum.TextXAlignment.Left
-
-local SizeLong = Instance.new("TextButton", Spawner)
-SizeLong.Size = UDim2.new(0.48, 0, 0, 40)
-SizeLong.Position = UDim2.new(0, 0, 0, 124)
-SizeLong.BackgroundColor3 = Theme.accentDark
-SizeLong.BorderSizePixel = 0
-SizeLong.Text = "LONG\n5 × 0.7 × 15"
-SizeLong.TextColor3 = Theme.text
-SizeLong.Font = Enum.Font.GothamBold
-SizeLong.TextSize = 8
-round(SizeLong, 7)
-stroke(SizeLong, Theme.accent, 1, 0.25)
-
-local SizeSquare = Instance.new("TextButton", Spawner)
-SizeSquare.Size = UDim2.new(0.48, 0, 0, 40)
-SizeSquare.Position = UDim2.new(0.52, 0, 0, 124)
-SizeSquare.BackgroundColor3 = Theme.panel3
-SizeSquare.BorderSizePixel = 0
-SizeSquare.Text = "SQUARE\n5 × 0.7 × 6"
-SizeSquare.TextColor3 = Theme.muted
-SizeSquare.Font = Enum.Font.GothamBold
-SizeSquare.TextSize = 8
-round(SizeSquare, 7)
-stroke(SizeSquare, Theme.border, 1, 0.2)
-
-local SpawnAction = Instance.new("TextButton", Spawner)
-SpawnAction.Size = UDim2.new(1, 0, 0, 44)
-SpawnAction.Position = UDim2.new(0, 0, 0, 178)
-SpawnAction.BackgroundColor3 = Theme.accentDark
-SpawnAction.BorderSizePixel = 0
-SpawnAction.Text = "SELECT LOCATION"
-SpawnAction.TextColor3 = Theme.text
-SpawnAction.Font = Enum.Font.GothamBold
-SpawnAction.TextSize = 10
-round(SpawnAction, 8)
-stroke(SpawnAction, Theme.accent, 1, 0.2)
-
-local SpawnStatus = Instance.new("TextLabel", Spawner)
-SpawnStatus.Size = UDim2.new(1, 0, 0, 24)
-SpawnStatus.Position = UDim2.new(0, 0, 0, 230)
-SpawnStatus.BackgroundTransparency = 1
-SpawnStatus.Text = "● READY"
-SpawnStatus.TextColor3 = Theme.accent
-SpawnStatus.Font = Enum.Font.GothamBold
-SpawnStatus.TextSize = 8
-SpawnStatus.TextXAlignment = Enum.TextXAlignment.Left
-
-local SpawnNote = Instance.new("TextLabel", Spawner)
-SpawnNote.Size = UDim2.new(1, 0, 0, 42)
-SpawnNote.Position = UDim2.new(0, 0, 0, 258)
-SpawnNote.BackgroundColor3 = Theme.panel2
-SpawnNote.BorderSizePixel = 0
-SpawnNote.Text = "ANCHOR + COLLIDE are enabled for spawned parts.\nEnter a texture/decal ID before spawning."
-SpawnNote.TextColor3 = Theme.muted
-SpawnNote.Font = Enum.Font.Gotham
-SpawnNote.TextSize = 8
-SpawnNote.TextWrapped = true
-round(SpawnNote, 7)
-stroke(SpawnNote, Theme.border, 1, 0.2)
-
-local currentSizeHYAZ = Vector3.new(5, 0.699, 15)
-local targetingHYAZ = false
-
-SizeLong.MouseButton1Click:Connect(function()
-    currentSizeHYAZ = Vector3.new(5, 0.699, 15)
-    SizeLong.BackgroundColor3 = Theme.accentDark
-    SizeSquare.BackgroundColor3 = Theme.panel3
-    SizeLong.TextColor3 = Theme.text
-    SizeSquare.TextColor3 = Theme.muted
-end)
-
-SizeSquare.MouseButton1Click:Connect(function()
-    currentSizeHYAZ = Vector3.new(5, 0.699, 6)
-    SizeSquare.BackgroundColor3 = Theme.accentDark
-    SizeLong.BackgroundColor3 = Theme.panel3
-    SizeSquare.TextColor3 = Theme.text
-    SizeLong.TextColor3 = Theme.muted
-end)
-
-SpawnAction.MouseButton1Click:Connect(function()
-    targetingHYAZ = true
-    SpawnStatus.Text = "● CLICK A SURFACE TO SPAWN"
-    SpawnStatus.TextColor3 = Color3.fromRGB(255, 190, 80)
-    SpawnAction.BackgroundColor3 = Color3.fromRGB(150, 75, 20)
-end)
-
-UserInputService.InputBegan:Connect(function(input, gameProcessed)
-    if not targetingHYAZ or gameProcessed then return end
-    if input.UserInputType ~= Enum.UserInputType.MouseButton1 and input.UserInputType ~= Enum.UserInputType.Touch then return end
-    local camera = Workspace.CurrentCamera
-    if not camera then return end
-    local ray = camera:ScreenPointToRay(input.Position.X, input.Position.Y)
-    local params = RaycastParams.new()
-    if LocalPlayer.Character then
-        params.FilterDescendantsInstances = {LocalPlayer.Character}
-        params.FilterType = Enum.RaycastFilterType.Exclude
-    end
-    local hit = Workspace:Raycast(ray.Origin, ray.Direction * 1000, params)
-    if hit then
-        local part = Instance.new("Part")
-        part.Name = "HYAZ_SpecialMeshPart"
-        part.Size = currentSizeHYAZ
-        part.Material = Enum.Material.SmoothPlastic
-        part.TopSurface = Enum.SurfaceType.Smooth
-        part.BottomSurface = Enum.SurfaceType.Smooth
-        part.CFrame = CFrame.new(hit.Position) * CFrame.new(0, currentSizeHYAZ.Y / 2, 0)
-        part.Anchored = true
-        part.CanCollide = true
-        local mesh = Instance.new("SpecialMesh")
-        mesh.MeshType = Enum.MeshType.Brick
-        mesh.Scale = currentSizeHYAZ
-        local raw = TextureBox2.Text:gsub("%D", "")
-        if raw ~= "" then mesh.TextureId = "rbxassetid://" .. raw end
-        mesh.Parent = part
-        part.Parent = Workspace
-        targetingHYAZ = false
-        SpawnStatus.Text = "● SPAWNED SUCCESSFULLY"
-        SpawnStatus.TextColor3 = Theme.accent
-        SpawnAction.BackgroundColor3 = Theme.accentDark
-        task.delay(2, function()
-            if SpawnStatus and SpawnStatus.Parent then SpawnStatus.Text = "● READY" end
-        end)
-    end
-end)
 
 local SearchBar = Instance.new("Frame", Content)
 SearchBar.Size = UDim2.new(1, -34, 0, 34)
@@ -1657,31 +1427,6 @@ Scroll.ScrollBarThickness = 3
 Scroll.ScrollBarImageColor3 = Theme.accent
 Scroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
 Scroll.CanvasSize = UDim2.new(0, 0, 0, 0)
-
-local function setModule(which)
-    local importer = not (which == 2)
-    Spawner.Visible = not importer
-    SearchBar.Visible = importer
-    SearchClearBtn.Visible = importer
-    ListHeader.Visible = importer
-    Scroll.Visible = importer
-    if importer then
-        Module1Btn.BackgroundColor3 = Color3.fromRGB(100,17,27)
-        Module1Btn.TextColor3 = Theme.text
-        Module2Btn.BackgroundColor3 = Theme.panel3
-        Module2Btn.TextColor3 = Theme.muted
-    else
-        Module2Btn.BackgroundColor3 = Color3.fromRGB(100,17,27)
-        Module2Btn.TextColor3 = Theme.text
-        Module1Btn.BackgroundColor3 = Theme.panel3
-        Module1Btn.TextColor3 = Theme.muted
-    end
-end
-
-Module1Btn.MouseButton1Click:Connect(function() setModule(1) end)
-Module2Btn.MouseButton1Click:Connect(function() setModule(2) end)
-
-
 
 local Layout = Instance.new("UIListLayout", Scroll)
 Layout.Padding = UDim.new(0, 6)
@@ -2053,153 +1798,26 @@ ScanClick.MouseButton1Click:Connect(function()
 end)
 
 -- MINIMIZE / CLOSE
--- Minimize uses a separate floating capsule instead of resizing Main.
--- This prevents the header controls from being clipped and keeps HYAZ
--- immediately recoverable on mobile and desktop executors.
-
-local MinimizedBar = Instance.new("Frame", UI)
-MinimizedBar.Name = "HYAZ_MinimizedBar"
-MinimizedBar.Size = UDim2.new(0, 218, 0, 46)
-MinimizedBar.Position = Main.Position
-MinimizedBar.BackgroundColor3 = Theme.panel2
-MinimizedBar.BorderSizePixel = 0
-MinimizedBar.Visible = false
-MinimizedBar.Active = true
-MinimizedBar.ZIndex = 50
-round(MinimizedBar, 13)
-stroke(MinimizedBar, Theme.accentDark, 1, 0.08)
-
-local MinBarGradient = Instance.new("UIGradient", MinimizedBar)
-MinBarGradient.Color = ColorSequence.new({
-    ColorSequenceKeypoint.new(0, Color3.fromRGB(27, 12, 19)),
-    ColorSequenceKeypoint.new(0.55, Color3.fromRGB(13, 14, 20)),
-    ColorSequenceKeypoint.new(1, Color3.fromRGB(24, 10, 16))
-})
-MinBarGradient.Rotation = 20
-registerGradientAnimation(MinBarGradient, 10, "rotate")
-
-local MinBarAccent = Instance.new("Frame", MinimizedBar)
-MinBarAccent.Size = UDim2.new(0, 3, 1, -16)
-MinBarAccent.Position = UDim2.new(0, 7, 0, 8)
-MinBarAccent.BackgroundColor3 = Theme.accent
-MinBarAccent.BorderSizePixel = 0
-MinBarAccent.ZIndex = 51
-round(MinBarAccent, 2)
-
-local MinBarTitle = Instance.new("TextLabel", MinimizedBar)
-MinBarTitle.Size = UDim2.new(0, 74, 0, 18)
-MinBarTitle.Position = UDim2.new(0, 18, 0, 7)
-MinBarTitle.BackgroundTransparency = 1
-MinBarTitle.Text = "HYAZ"
-MinBarTitle.TextColor3 = Theme.text
-MinBarTitle.Font = Enum.Font.GothamBold
-MinBarTitle.TextSize = 12
-MinBarTitle.TextXAlignment = Enum.TextXAlignment.Left
-MinBarTitle.ZIndex = 51
-
-local MinBarStatus = Instance.new("TextLabel", MinimizedBar)
-MinBarStatus.Size = UDim2.new(0, 110, 0, 13)
-MinBarStatus.Position = UDim2.new(0, 18, 0, 25)
-MinBarStatus.BackgroundTransparency = 1
-MinBarStatus.Text = "TOOLKIT  •  MINIMIZED"
-MinBarStatus.TextColor3 = Theme.muted
-MinBarStatus.Font = Enum.Font.GothamMedium
-MinBarStatus.TextSize = 7
-MinBarStatus.TextXAlignment = Enum.TextXAlignment.Left
-MinBarStatus.ZIndex = 51
-
-local MinBarRestore = Instance.new("Frame", MinimizedBar)
-MinBarRestore.Size = UDim2.new(0, 30, 0, 30)
-MinBarRestore.Position = UDim2.new(1, -39, 0.5, -15)
-MinBarRestore.BackgroundColor3 = Color3.fromRGB(52, 14, 22)
-MinBarRestore.BorderSizePixel = 0
-MinBarRestore.ZIndex = 51
-round(MinBarRestore, 9)
-stroke(MinBarRestore, Theme.accentDark, 1, 0.15)
-
-local MinBarRestoreIcon = Instance.new("ImageLabel", MinBarRestore)
-MinBarRestoreIcon.Size = UDim2.new(0, 14, 0, 14)
-MinBarRestoreIcon.Position = UDim2.new(0.5, -7, 0.5, -7)
-MinBarRestoreIcon.BackgroundTransparency = 1
-MinBarRestoreIcon.Image = ICONS.CHEVRON_RIGHT
-MinBarRestoreIcon.ImageColor3 = Theme.accentSoft
-MinBarRestoreIcon.ZIndex = 52
-
-local MinBarRestoreClick = Instance.new("TextButton", MinBarRestore)
-MinBarRestoreClick.Size = UDim2.new(1, 0, 1, 0)
-MinBarRestoreClick.BackgroundTransparency = 1
-MinBarRestoreClick.Text = ""
-MinBarRestoreClick.ZIndex = 53
-
-addHover(MinBarRestoreClick, MinBarRestore, Color3.fromRGB(52, 14, 22), Color3.fromRGB(86, 20, 31))
-
--- Dragging for minimized capsule.
-do
-    local dragging = false
-    local dragStart
-    local startPos
-    MinimizedBar.InputBegan:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-            dragging = true
-            dragStart = input.Position
-            startPos = MinimizedBar.Position
-        end
-    end)
-    UserInputService.InputChanged:Connect(function(input)
-        if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
-            local delta = input.Position - dragStart
-            MinimizedBar.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
-        end
-    end)
-    UserInputService.InputEnded:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-            dragging = false
-        end
-    end)
-end
-
-local minimized = false
-local expandedSize = Main.Size
-local expandedPosition = Main.Position
-
 CloseClick.MouseButton1Click:Connect(function()
     if Main.Visible then
         toggleMain()
     end
 end)
 
-local function setMinimized(state)
-    minimized = state
-    if minimized then
-        expandedSize = Main.Size
-        expandedPosition = Main.Position
-        MinimizedBar.Position = Main.Position
-        Main.Visible = false
-        MinimizedBar.Visible = true
-        ToggleFrame.Visible = false
-        ToggleIcon.Image = ICONS.CHEVRON_RIGHT
-    else
-        Main.Position = expandedPosition
-        Main.Size = expandedSize
-        Main.Visible = true
-        MinimizedBar.Visible = false
-        ToggleFrame.Visible = true
-        ToggleIcon.Image = ICONS.CHEVRON_RIGHT
-    end
-end
-
+local minimized = false
 MinClick.MouseButton1Click:Connect(function()
-    setMinimized(true)
+    minimized = not minimized
+    if minimized then
+        Content.Visible = false
+        StatsBar.Visible = false
+        Main.Size = UDim2.new(0, 390, 0, 62)
+    else
+        Content.Visible = true
+        StatsBar.Visible = true
+        Main.Size = UDim2.new(0, 390, 0, 470)
+    end
 end)
 
-MinBarRestoreClick.MouseButton1Click:Connect(function()
-    -- Restore at the capsule's current position.
-    expandedPosition = MinimizedBar.Position
-    setMinimized(false)
-end)
-
-
-setModule(1)
 
 -- HOOKS (Anti-Putus Studio Lite)
 --                                                                        
@@ -2290,4 +1908,4 @@ task.spawn(function()
     end
 end)
 
-print("[Hyaz] IMPORTER v1.0 LOADED")
+print("[Hyaz] IMPORTER v62.0 LOADED")
