@@ -874,124 +874,263 @@ UserInputService.InputEnded:Connect(function(input)
     end
 end)
 
--- MAIN CONTAINER (Horizontal Style)
+-- MAIN CONTAINER
+-- Modern UI redesign: logic/functionality is intentionally kept the same.
+-- LoadingScreen section above is untouched.
+
+local Theme = {
+    bg = Color3.fromRGB(11, 14, 22),
+    panel = Color3.fromRGB(16, 20, 30),
+    panel2 = Color3.fromRGB(20, 25, 37),
+    panel3 = Color3.fromRGB(25, 31, 45),
+    accent = Color3.fromRGB(91, 141, 255),
+    accent2 = Color3.fromRGB(123, 92, 255),
+    accentSoft = Color3.fromRGB(151, 180, 255),
+    text = Color3.fromRGB(239, 243, 255),
+    muted = Color3.fromRGB(145, 155, 177),
+    border = Color3.fromRGB(49, 58, 80),
+    success = Color3.fromRGB(86, 210, 135),
+    danger = Color3.fromRGB(239, 92, 92),
+}
+
+local function round(obj, radius)
+    local c = Instance.new("UICorner", obj)
+    c.CornerRadius = UDim.new(0, radius or 8)
+    return c
+end
+
+local function stroke(obj, color, thickness, transparency)
+    local s = Instance.new("UIStroke", obj)
+    s.Color = color or Theme.border
+    s.Thickness = thickness or 1
+    s.Transparency = transparency == nil and 0 or transparency
+    return s
+end
+
+local function padding(obj, top, right, bottom, left)
+    local p = Instance.new("UIPadding", obj)
+    p.PaddingTop = UDim.new(0, top or 0)
+    p.PaddingRight = UDim.new(0, right or 0)
+    p.PaddingBottom = UDim.new(0, bottom or 0)
+    p.PaddingLeft = UDim.new(0, left or 0)
+    return p
+end
+
+local function addHover(button, target, normal, hover)
+    button.MouseEnter:Connect(function()
+        TweenService:Create(target, TweenInfo.new(0.16, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+            BackgroundColor3 = hover
+        }):Play()
+    end)
+    button.MouseLeave:Connect(function()
+        TweenService:Create(target, TweenInfo.new(0.16, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+            BackgroundColor3 = normal
+        }):Play()
+    end)
+end
+
+local UI = UI
+
+-- Floating toggle
+local ToggleFrame = Instance.new("Frame", UI)
+ToggleFrame.Name = "ToggleFrame"
+ToggleFrame.Size = UDim2.new(0, 38, 0, 38)
+ToggleFrame.Position = UDim2.new(0, 10, 0, 48)
+ToggleFrame.BackgroundColor3 = Theme.panel2
+ToggleFrame.BorderSizePixel = 0
+ToggleFrame.Active = true
+round(ToggleFrame, 11)
+stroke(ToggleFrame, Theme.accent, 1, 0.35)
+
+local ToggleGrad = Instance.new("UIGradient", ToggleFrame)
+ToggleGrad.Color = ColorSequence.new({
+    ColorSequenceKeypoint.new(0, Color3.fromRGB(32, 43, 68)),
+    ColorSequenceKeypoint.new(0.5, Color3.fromRGB(26, 32, 52)),
+    ColorSequenceKeypoint.new(1, Color3.fromRGB(20, 24, 36))
+})
+ToggleGrad.Rotation = 35
+registerGradientAnimation(ToggleGrad, 12, "rotate")
+
+local ToggleIcon = Instance.new("ImageLabel", ToggleFrame)
+ToggleIcon.Size = UDim2.new(0, 18, 0, 18)
+ToggleIcon.Position = UDim2.new(0.5, -9, 0.5, -9)
+ToggleIcon.BackgroundTransparency = 1
+ToggleIcon.Image = ICONS.CHEVRON_RIGHT
+ToggleIcon.ImageColor3 = Theme.accentSoft
+
+local ToggleBtn = Instance.new("TextButton", ToggleFrame)
+ToggleBtn.Size = UDim2.new(1, 0, 1, 0)
+ToggleBtn.BackgroundTransparency = 1
+ToggleBtn.Text = ""
+
+do
+    local tDragToggle, tDragStart, tStartPos
+    ToggleFrame.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            tDragToggle = true
+            tDragStart = input.Position
+            tStartPos = ToggleFrame.Position
+        end
+    end)
+
+    UserInputService.InputChanged:Connect(function(input)
+        if tDragToggle and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+            local delta = input.Position - tDragStart
+            ToggleFrame.Position = UDim2.new(
+                tStartPos.X.Scale, tStartPos.X.Offset + delta.X,
+                tStartPos.Y.Scale, tStartPos.Y.Offset + delta.Y
+            )
+        end
+    end)
+
+    UserInputService.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            tDragToggle = false
+        end
+    end)
+end
+
+-- MAIN CONTAINER
 local Main = Instance.new("Frame", UI)
 Main.Name = "MainFrame"
-Main.Size = UDim2.new(0, 600, 0, 300) -- lebih lebar daripada tinggi
-Main.Position = UDim2.new(0.5, -300, 0.5, -150)
-Main.BackgroundColor3 = Color3.fromRGB(25, 25, 25) -- abu-abu gelap
-Main.BackgroundTransparency = 0.05
+Main.Size = UDim2.new(0, 390, 0, 470)
+Main.Position = UDim2.new(0.5, -195, 0.5, -235)
+Main.BackgroundColor3 = Theme.bg
+Main.BackgroundTransparency = 0
 Main.BorderSizePixel = 0
 Main.ClipsDescendants = true
 Main.Visible = true
+round(Main, 16)
+stroke(Main, Theme.border, 1, 0.05)
 
-local MainCorner = Instance.new("UICorner", Main)
-MainCorner.CornerRadius = UDim.new(0, 10)
+local MainGradient = Instance.new("UIGradient", Main)
+MainGradient.Color = ColorSequence.new({
+    ColorSequenceKeypoint.new(0, Color3.fromRGB(19, 24, 36)),
+    ColorSequenceKeypoint.new(0.55, Color3.fromRGB(12, 16, 25)),
+    ColorSequenceKeypoint.new(1, Color3.fromRGB(9, 12, 19))
+})
+MainGradient.Rotation = 135
 
-local MainStroke = Instance.new("UIStroke", Main)
-MainStroke.Thickness = 1.2
-MainStroke.Color = Color3.fromRGB(200, 40, 40)
-MainStroke.Transparency = 0.2
-
-
--- TITLE BAR WITH VECTOR PACKAGE ICON
+-- HEADER
 local TitleBar = Instance.new("Frame", Main)
-TitleBar.Size = UDim2.new(1, 0, 0, 36)
-TitleBar.BackgroundColor3 = Color3.fromRGB(90, 0, 0) -- merah gelap
+TitleBar.Size = UDim2.new(1, 0, 0, 62)
+TitleBar.BackgroundColor3 = Theme.panel2
 TitleBar.BorderSizePixel = 0
 TitleBar.ClipsDescendants = true
 
--- Round the upper panel corners so the header matches the rounded body.
-local TitleCorner = Instance.new("UICorner", TitleBar)
-TitleCorner.CornerRadius = UDim.new(0, 10)
+local HeaderLine = Instance.new("Frame", TitleBar)
+HeaderLine.Size = UDim2.new(1, 0, 0, 1)
+HeaderLine.Position = UDim2.new(0, 0, 1, -1)
+HeaderLine.BackgroundColor3 = Theme.border
+HeaderLine.BorderSizePixel = 0
 
-local TitleGrad = Instance.new("UIGradient", TitleBar)
-TitleGrad.Color = ColorSequence.new({
-    ColorSequenceKeypoint.new(0, Color3.fromRGB(140, 20, 20)), -- gradasi merah
-    ColorSequenceKeypoint.new(0.5, Color3.fromRGB(200, 40, 40)),
-    ColorSequenceKeypoint.new(1, Color3.fromRGB(255, 120, 120))
-})
-registerGradientAnimation(TitleGrad, 0.8, "shift")
+local TitleIconWrap = Instance.new("Frame", TitleBar)
+TitleIconWrap.Size = UDim2.new(0, 38, 0, 38)
+TitleIconWrap.Position = UDim2.new(0, 13, 0.5, -19)
+TitleIconWrap.BackgroundColor3 = Color3.fromRGB(29, 39, 63)
+TitleIconWrap.BorderSizePixel = 0
+round(TitleIconWrap, 11)
+stroke(TitleIconWrap, Theme.accent, 1, 0.45)
 
-local TitleIcon = Instance.new("ImageLabel", TitleBar)
-TitleIcon.Size = UDim2.new(0, 18, 0, 18)
-TitleIcon.Position = UDim2.new(0, 10, 0.5, -9)
+local TitleIcon = Instance.new("ImageLabel", TitleIconWrap)
+TitleIcon.Size = UDim2.new(0, 20, 0, 20)
+TitleIcon.Position = UDim2.new(0.5, -10, 0.5, -10)
 TitleIcon.BackgroundTransparency = 1
 TitleIcon.Image = ICONS.PACKAGE
-TitleIcon.ImageColor3 = Color3.fromRGB(255, 120, 120) -- ikon merah terang
+TitleIcon.ImageColor3 = Theme.accentSoft
 
 local TitleText = Instance.new("TextLabel", TitleBar)
-TitleText.Size = UDim2.new(1, -90, 1, 0)
-TitleText.Position = UDim2.new(0, 34, 0, 0)
+TitleText.Size = UDim2.new(1, -155, 0, 22)
+TitleText.Position = UDim2.new(0, 61, 0, 10)
 TitleText.BackgroundTransparency = 1
-TitleText.Text = string.char(75,73,78,71,32,72,89,65,90,32)..string.char(240,159,145,145) -- KING HYAZ 👑
-TitleText.TextColor3 = Color3.fromRGB(255, 200, 200) -- teks merah muda
-TitleText.TextStrokeTransparency = 0.0
-TitleText.TextStrokeColor3 = Color3.fromRGB(200, 40, 40) -- stroke merah
+TitleText.Text = "KING HYAZ"
+TitleText.TextColor3 = Theme.text
 TitleText.Font = Enum.Font.GothamBold
-TitleText.TextSize = 12
+TitleText.TextSize = 16
 TitleText.TextXAlignment = Enum.TextXAlignment.Left
 
--- CLOSE BUTTON WITH CLEAR X ICON
+local Subtitle = Instance.new("TextLabel", TitleBar)
+Subtitle.Size = UDim2.new(1, -155, 0, 16)
+Subtitle.Position = UDim2.new(0, 61, 0, 33)
+Subtitle.BackgroundTransparency = 1
+Subtitle.Text = "RBXM / RBXL IMPORTER  â€¢  READY"
+Subtitle.TextColor3 = Theme.muted
+Subtitle.Font = Enum.Font.GothamMedium
+Subtitle.TextSize = 9
+Subtitle.TextXAlignment = Enum.TextXAlignment.Left
+
 local CloseBtn = Instance.new("Frame", TitleBar)
-CloseBtn.Size = UDim2.new(0, 22, 0, 22)
-CloseBtn.Position = UDim2.new(1, -28, 0.5, -11)
-CloseBtn.BackgroundColor3 = Color3.fromRGB(90, 0, 0) -- merah gelap
-Instance.new("UICorner", CloseBtn).CornerRadius = UDim.new(0, 5)
+CloseBtn.Size = UDim2.new(0, 28, 0, 28)
+CloseBtn.Position = UDim2.new(1, -38, 0.5, -14)
+CloseBtn.BackgroundColor3 = Color3.fromRGB(40, 25, 31)
+CloseBtn.BorderSizePixel = 0
+round(CloseBtn, 8)
+stroke(CloseBtn, Theme.danger, 1, 0.55)
 
 local CloseIcon = Instance.new("TextLabel", CloseBtn)
-CloseIcon.Size = UDim2.new(0, 12, 0, 12)
-CloseIcon.Position = UDim2.new(0.5, -6, 0.5, -6)
+CloseIcon.Size = UDim2.new(1, 0, 1, 0)
 CloseIcon.BackgroundTransparency = 1
-CloseIcon.Text = "X"
-CloseIcon.TextColor3 = Color3.fromRGB(255, 120, 120) -- merah terang
+CloseIcon.Text = "Ã—"
+CloseIcon.TextColor3 = Color3.fromRGB(255, 155, 165)
 CloseIcon.Font = Enum.Font.GothamBold
-CloseIcon.TextSize = 12
-CloseIcon.TextXAlignment = Enum.TextXAlignment.Center
-CloseIcon.TextYAlignment = Enum.TextYAlignment.Center
+CloseIcon.TextSize = 18
 
 local CloseClick = Instance.new("TextButton", CloseBtn)
 CloseClick.Size = UDim2.new(1, 0, 1, 0)
 CloseClick.BackgroundTransparency = 1
 CloseClick.Text = ""
 
--- MINIMIZE BUTTON WITH VECTOR MINIMIZE ICON
 local MinBtn = Instance.new("Frame", TitleBar)
-MinBtn.Size = UDim2.new(0, 22, 0, 22)
-MinBtn.Position = UDim2.new(1, -54, 0.5, -11)
-MinBtn.BackgroundColor3 = Color3.fromRGB(90, 0, 0) -- merah gelap
-Instance.new("UICorner", MinBtn).CornerRadius = UDim.new(0, 5)
+MinBtn.Size = UDim2.new(0, 28, 0, 28)
+MinBtn.Position = UDim2.new(1, -72, 0.5, -14)
+MinBtn.BackgroundColor3 = Theme.panel3
+MinBtn.BorderSizePixel = 0
+round(MinBtn, 8)
+stroke(MinBtn, Theme.border, 1, 0.35)
 
 local MinIcon = Instance.new("ImageLabel", MinBtn)
-MinIcon.Size = UDim2.new(0, 12, 0, 12)
-MinIcon.Position = UDim2.new(0.5, -6, 0.5, -6)
+MinIcon.Size = UDim2.new(0, 13, 0, 13)
+MinIcon.Position = UDim2.new(0.5, -6.5, 0.5, -6.5)
 MinIcon.BackgroundTransparency = 1
 MinIcon.Image = ICONS.MINIMIZE
-MinIcon.ImageColor3 = Color3.fromRGB(255, 120, 120) -- merah terang
+MinIcon.ImageColor3 = Theme.accentSoft
 
 local MinClick = Instance.new("TextButton", MinBtn)
 MinClick.Size = UDim2.new(1, 0, 1, 0)
 MinClick.BackgroundTransparency = 1
 MinClick.Text = ""
 
--- Dragging System Main UI
-local dragToggle, dragStart, startPos
-TitleBar.InputBegan:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then 
-        dragToggle = true; dragStart = input.Position; startPos = Main.Position 
-    end
-end)
-UserInputService.InputChanged:Connect(function(input)
-    if dragToggle and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
-        local delta = input.Position - dragStart
-        Main.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
-    end
-end)
-UserInputService.InputEnded:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then dragToggle = false end
-end)
+addHover(CloseClick, CloseBtn, Color3.fromRGB(40, 25, 31), Color3.fromRGB(65, 30, 38))
+addHover(MinClick, MinBtn, Theme.panel3, Color3.fromRGB(35, 43, 62))
 
--- Toggle panel visibility
+-- Dragging System Main UI
+do
+    local dragToggle, dragStart, startPos
+    TitleBar.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            dragToggle = true
+            dragStart = input.Position
+            startPos = Main.Position
+        end
+    end)
+
+    UserInputService.InputChanged:Connect(function(input)
+        if dragToggle and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+            local delta = input.Position - dragStart
+            Main.Position = UDim2.new(
+                startPos.X.Scale, startPos.X.Offset + delta.X,
+                startPos.Y.Scale, startPos.Y.Offset + delta.Y
+            )
+        end
+    end)
+
+    UserInputService.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            dragToggle = false
+        end
+    end)
+end
+
 local function toggleMain()
     Main.Visible = not Main.Visible
     ToggleIcon.Image = Main.Visible and ICONS.CHEVRON_RIGHT or ICONS.CHEVRON_LEFT
@@ -1000,145 +1139,371 @@ end
 ToggleBtn.MouseButton1Click:Connect(toggleMain)
 
 -- CONTENT AREA
--- CONTENT AREA (Horizontal Layout)
 local Content = Instance.new("Frame", Main)
-Content.Size = UDim2.new(1, -16, 1, -74)
-Content.Position = UDim2.new(0, 8, 0, 42)
-Content.BackgroundColor3 = Color3.fromRGB(25, 25, 25)
-Instance.new("UICorner", Content).CornerRadius = UDim.new(0, 8)
+Content.Size = UDim2.new(1, -24, 1, -144)
+Content.Position = UDim2.new(0, 12, 0, 74)
+Content.BackgroundColor3 = Theme.panel
+Content.BorderSizePixel = 0
+round(Content, 12)
+stroke(Content, Theme.border, 1, 0.2)
 
-local ContentLayout = Instance.new("UIListLayout", Content)
-ContentLayout.FillDirection = Enum.FillDirection.Horizontal
-ContentLayout.Padding = UDim.new(0, 8)
+padding(Content, 10, 10, 10, 10)
 
--- BUTTON BAR (Scan + Clear)
-local ButtonBar = Instance.new("Frame", Content)
-ButtonBar.Size = UDim2.new(0, 200, 0, 30)
-ButtonBar.BackgroundTransparency = 1
+-- SCAN BUTTON
+local ScanBtn = Instance.new("Frame", Content)
+ScanBtn.Size = UDim2.new(1, 0, 0, 42)
+ScanBtn.Position = UDim2.new(0, 0, 0, 0)
+ScanBtn.BackgroundColor3 = Color3.fromRGB(45, 72, 130)
+ScanBtn.BorderSizePixel = 0
+round(ScanBtn, 9)
+stroke(ScanBtn, Theme.accent, 1, 0.3)
 
-local ButtonLayout = Instance.new("UIListLayout", ButtonBar)
-ButtonLayout.FillDirection = Enum.FillDirection.Horizontal
-ButtonLayout.Padding = UDim.new(0, 6)
+local ScanGrad = Instance.new("UIGradient", ScanBtn)
+ScanGrad.Color = ColorSequence.new({
+    ColorSequenceKeypoint.new(0, Color3.fromRGB(62, 92, 160)),
+    ColorSequenceKeypoint.new(0.5, Color3.fromRGB(55, 78, 135)),
+    ColorSequenceKeypoint.new(1, Color3.fromRGB(76, 63, 145))
+})
+ScanGrad.Rotation = 20
+registerGradientAnimation(ScanGrad, 8, "shift")
 
-local ScanBtn = Instance.new("TextButton", ButtonBar)
-ScanBtn.Size = UDim2.new(0.5, -3, 1, 0)
-ScanBtn.BackgroundColor3 = Color3.fromRGB(200, 40, 40)
-ScanBtn.Text = "Pindai asset lokal"
-ScanBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-ScanBtn.Font = Enum.Font.GothamBold
-ScanBtn.TextSize = 12
-Instance.new("UICorner", ScanBtn).CornerRadius = UDim.new(0, 6)
+local ScanIcon = Instance.new("ImageLabel", ScanBtn)
+ScanIcon.Size = UDim2.new(0, 17, 0, 17)
+ScanIcon.Position = UDim2.new(0, 13, 0.5, -8.5)
+ScanIcon.BackgroundTransparency = 1
+ScanIcon.Image = ICONS.SEARCH
+ScanIcon.ImageColor3 = Color3.fromRGB(225, 235, 255)
 
-local ClearBtn = Instance.new("TextButton", ButtonBar)
-ClearBtn.Size = UDim2.new(0.5, -3, 1, 0)
-ClearBtn.BackgroundColor3 = Color3.fromRGB(80, 80, 80)
-ClearBtn.Text = "Bersihkan"
-ClearBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-ClearBtn.Font = Enum.Font.GothamBold
-ClearBtn.TextSize = 12
-Instance.new("UICorner", ClearBtn).CornerRadius = UDim.new(0, 6)
+local ScanText = Instance.new("TextLabel", ScanBtn)
+ScanText.Size = UDim2.new(1, -55, 1, 0)
+ScanText.Position = UDim2.new(0, 40, 0, 0)
+ScanText.BackgroundTransparency = 1
+ScanText.Text = "SCAN FILES"
+ScanText.TextColor3 = Theme.text
+ScanText.Font = Enum.Font.GothamBold
+ScanText.TextSize = 11
+ScanText.TextXAlignment = Enum.TextXAlignment.Left
+
+local ScanHint = Instance.new("TextLabel", ScanBtn)
+ScanHint.Size = UDim2.new(0, 110, 1, 0)
+ScanHint.Position = UDim2.new(1, -122, 0, 0)
+ScanHint.BackgroundTransparency = 1
+ScanHint.Text = "RBXM  â€¢  RBXL"
+ScanHint.TextColor3 = Color3.fromRGB(190, 205, 235)
+ScanHint.Font = Enum.Font.GothamMedium
+ScanHint.TextSize = 8
+ScanHint.TextXAlignment = Enum.TextXAlignment.Right
+
+local ScanClick = Instance.new("TextButton", ScanBtn)
+ScanClick.Size = UDim2.new(1, 0, 1, 0)
+ScanClick.BackgroundTransparency = 1
+ScanClick.Text = ""
+addHover(ScanClick, ScanBtn, Color3.fromRGB(45, 72, 130), Color3.fromRGB(60, 91, 158))
 
 -- SEARCH BAR
 local SearchBar = Instance.new("Frame", Content)
-SearchBar.Size = UDim2.new(0, 220, 0, 30)
-SearchBar.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
-Instance.new("UICorner", SearchBar).CornerRadius = UDim.new(0, 6)
+SearchBar.Size = UDim2.new(1, 0, 0, 36)
+SearchBar.Position = UDim2.new(0, 0, 0, 50)
+SearchBar.BackgroundColor3 = Theme.panel3
+SearchBar.BorderSizePixel = 0
+round(SearchBar, 9)
+stroke(SearchBar, Theme.border, 1, 0.1)
+
+local SearchIcon = Instance.new("ImageLabel", SearchBar)
+SearchIcon.Size = UDim2.new(0, 15, 0, 15)
+SearchIcon.Position = UDim2.new(0, 11, 0.5, -7.5)
+SearchIcon.BackgroundTransparency = 1
+SearchIcon.Image = ICONS.SEARCH
+SearchIcon.ImageColor3 = Theme.muted
 
 local SearchInput = Instance.new("TextBox", SearchBar)
-SearchInput.Size = UDim2.new(1, -28, 1, 0)
-SearchInput.Position = UDim2.new(0, 6, 0, 0)
+SearchInput.Size = UDim2.new(1, -72, 1, 0)
+SearchInput.Position = UDim2.new(0, 35, 0, 0)
 SearchInput.BackgroundTransparency = 1
-SearchInput.PlaceholderText = "Cari nama asset..."
-SearchInput.PlaceholderColor3 = Color3.fromRGB(200, 120, 120)
-SearchInput.TextColor3 = Color3.fromRGB(255, 255, 255)
+SearchInput.Text = ""
+SearchInput.PlaceholderText = "Search file or enter path..."
+SearchInput.PlaceholderColor3 = Color3.fromRGB(105, 115, 138)
+SearchInput.TextColor3 = Theme.text
 SearchInput.Font = Enum.Font.Gotham
 SearchInput.TextSize = 10
+SearchInput.TextXAlignment = Enum.TextXAlignment.Left
+SearchInput.ClearTextOnFocus = false
 
--- SCROLL LIST (Horizontal)
+local SearchClearBtn = Instance.new("TextButton", SearchBar)
+SearchClearBtn.Size = UDim2.new(0, 26, 0, 26)
+SearchClearBtn.Position = UDim2.new(1, -31, 0.5, -13)
+SearchClearBtn.BackgroundColor3 = Color3.fromRGB(34, 40, 55)
+SearchClearBtn.BorderSizePixel = 0
+SearchClearBtn.Text = "Ã—"
+SearchClearBtn.TextColor3 = Theme.muted
+SearchClearBtn.Font = Enum.Font.GothamBold
+SearchClearBtn.TextSize = 14
+round(SearchClearBtn, 7)
+
+-- FILE LIST
 local Scroll = Instance.new("ScrollingFrame", Content)
-Scroll.Size = UDim2.new(1, -440, 1, -20)
+Scroll.Size = UDim2.new(1, 0, 1, -96)
+Scroll.Position = UDim2.new(0, 0, 0, 96)
 Scroll.BackgroundTransparency = 1
+Scroll.BorderSizePixel = 0
 Scroll.ScrollBarThickness = 3
-Scroll.ScrollBarImageColor3 = Color3.fromRGB(200, 40, 40)
+Scroll.ScrollBarImageColor3 = Theme.accent
+Scroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
+Scroll.CanvasSize = UDim2.new(0, 0, 0, 0)
 
 local Layout = Instance.new("UIListLayout", Scroll)
-Layout.FillDirection = Enum.FillDirection.Vertical
-Layout.Padding = UDim.new(0, 6)
+Layout.Padding = UDim.new(0, 7)
+Layout.SortOrder = Enum.SortOrder.LayoutOrder
+
+-- EMPTY STATE
+local EmptyFrame = Instance.new("Frame", Scroll)
+EmptyFrame.Size = UDim2.new(1, 0, 0, 125)
+EmptyFrame.BackgroundTransparency = 1
+
+local EmptyIconWrap = Instance.new("Frame", EmptyFrame)
+EmptyIconWrap.Size = UDim2.new(0, 48, 0, 48)
+EmptyIconWrap.Position = UDim2.new(0.5, -24, 0, 15)
+EmptyIconWrap.BackgroundColor3 = Color3.fromRGB(27, 34, 50)
+EmptyIconWrap.BorderSizePixel = 0
+round(EmptyIconWrap, 14)
+stroke(EmptyIconWrap, Theme.border, 1, 0.3)
+
+local EmptyIcon = Instance.new("ImageLabel", EmptyIconWrap)
+EmptyIcon.Size = UDim2.new(0, 23, 0, 23)
+EmptyIcon.Position = UDim2.new(0.5, -11.5, 0.5, -11.5)
+EmptyIcon.BackgroundTransparency = 1
+EmptyIcon.Image = ICONS.FOLDER
+EmptyIcon.ImageColor3 = Theme.accentSoft
+
+local EmptyLabel = Instance.new("TextLabel", EmptyFrame)
+EmptyLabel.Size = UDim2.new(1, -24, 0, 42)
+EmptyLabel.Position = UDim2.new(0, 12, 0, 72)
+EmptyLabel.BackgroundTransparency = 1
+EmptyLabel.Text = "No files detected yet.\nPress SCAN FILES to search for RBXM / RBXL files."
+EmptyLabel.TextColor3 = Theme.muted
+EmptyLabel.Font = Enum.Font.Gotham
+EmptyLabel.TextSize = 10
+EmptyLabel.TextWrapped = true
+EmptyLabel.TextXAlignment = Enum.TextXAlignment.Center
+
+-- STATS BAR
+local StatsBar = Instance.new("Frame", Main)
+StatsBar.Size = UDim2.new(1, -24, 0, 46)
+StatsBar.Position = UDim2.new(0, 12, 1, -58)
+StatsBar.BackgroundColor3 = Theme.panel2
+StatsBar.BorderSizePixel = 0
+round(StatsBar, 10)
+stroke(StatsBar, Theme.border, 1, 0.2)
+
+local StatusDot = Instance.new("Frame", StatsBar)
+StatusDot.Size = UDim2.new(0, 8, 0, 8)
+StatusDot.Position = UDim2.new(0, 12, 0.5, -4)
+StatusDot.BackgroundColor3 = Theme.success
+StatusDot.BorderSizePixel = 0
+round(StatusDot, 4)
+
+local StatsText = Instance.new("TextLabel", StatsBar)
+StatsText.Size = UDim2.new(1, -32, 1, 0)
+StatsText.Position = UDim2.new(0, 28, 0, 0)
+StatsText.BackgroundTransparency = 1
+StatsText.Text = "Status: Ready  |  Files: 0"
+StatsText.TextColor3 = Theme.muted
+StatsText.Font = Enum.Font.GothamMedium
+StatsText.TextSize = 9
+StatsText.TextXAlignment = Enum.TextXAlignment.Left
 
 -- NOTIFICATION SYSTEM
 local function notify(title, msg, color)
-    color = color or Color3.fromRGB(200, 40, 40)
+    color = color or Theme.accent
+
     local notif = Instance.new("Frame", UI)
-    notif.Size = UDim2.new(0, 220, 0, 42)
-    notif.Position = UDim2.new(1, -230, 1, -55)
-    notif.BackgroundColor3 = Color3.fromRGB(25, 25, 25)
-    Instance.new("UICorner", notif).CornerRadius = UDim.new(0, 6)
+    notif.Size = UDim2.new(0, 280, 0, 62)
+    notif.Position = UDim2.new(1, -295, 1, -78)
+    notif.BackgroundColor3 = Theme.panel2
+    notif.BorderSizePixel = 0
+    notif.ZIndex = 200
+    round(notif, 11)
+    stroke(notif, color, 1, 0.2)
+
+    local accentLine = Instance.new("Frame", notif)
+    accentLine.Size = UDim2.new(0, 3, 1, -16)
+    accentLine.Position = UDim2.new(0, 0, 0, 8)
+    accentLine.BackgroundColor3 = color
+    accentLine.BorderSizePixel = 0
+    round(accentLine, 2)
 
     local icon = Instance.new("ImageLabel", notif)
-    icon.Size = UDim2.new(0, 14, 0, 14)
-    icon.Position = UDim2.new(0, 8, 0, 6)
+    icon.Size = UDim2.new(0, 17, 0, 17)
+    icon.Position = UDim2.new(0, 13, 0, 11)
     icon.BackgroundTransparency = 1
     icon.Image = ICONS.BELL
     icon.ImageColor3 = color
+    icon.ZIndex = 201
 
     local t = Instance.new("TextLabel", notif)
-    t.Size = UDim2.new(1, -28, 0, 14)
-    t.Position = UDim2.new(0, 26, 0, 4)
+    t.Size = UDim2.new(1, -48, 0, 18)
+    t.Position = UDim2.new(0, 39, 0, 8)
     t.BackgroundTransparency = 1
     t.Text = title
-    t.TextColor3 = Color3.fromRGB(255, 255, 255)
+    t.TextColor3 = Theme.text
     t.Font = Enum.Font.GothamBold
     t.TextSize = 10
     t.TextXAlignment = Enum.TextXAlignment.Left
+    t.ZIndex = 201
 
     local d = Instance.new("TextLabel", notif)
-    d.Size = UDim2.new(1, -12, 0, 16)
-    d.Position = UDim2.new(0, 8, 0, 18)
+    d.Size = UDim2.new(1, -24, 0, 27)
+    d.Position = UDim2.new(0, 13, 0, 30)
     d.BackgroundTransparency = 1
     d.Text = msg
-    d.TextColor3 = Color3.fromRGB(200, 120, 120)
+    d.TextColor3 = Theme.muted
     d.Font = Enum.Font.Gotham
     d.TextSize = 8
     d.TextXAlignment = Enum.TextXAlignment.Left
     d.TextWrapped = true
+    d.ZIndex = 201
+
+    task.spawn(function()
+        task.wait(2.5)
+        for i = 1, 12 do
+            local alpha = i / 12
+            notif.BackgroundTransparency = alpha
+            icon.ImageTransparency = alpha
+            t.TextTransparency = alpha
+            d.TextTransparency = alpha
+            accentLine.BackgroundTransparency = alpha
+            task.wait(0.02)
+        end
+        notif:Destroy()
+    end)
 end
 
--- FILECARD BUILDER (Horizontal)
+-- SEARCH STATE
+local allFileCards = {}
+local currentQuery = ""
+
+-- CARD BUILDER
+local totalLoaded = 0
+
 local function buildFileCard(fileInfo)
+    EmptyFrame.Visible = false
+
     local card = Instance.new("Frame", Scroll)
-    card.Size = UDim2.new(1, 0, 0, 44)
-    card.BackgroundColor3 = Color3.fromRGB(35, 35, 35)
-    Instance.new("UICorner", card).CornerRadius = UDim.new(0, 6)
+    table.insert(allFileCards, {fileInfo=fileInfo, card=card})
+    card.Size = UDim2.new(1, 0, 0, 60)
+    card.BackgroundColor3 = Theme.panel2
+    card.BorderSizePixel = 0
+    round(card, 10)
+    stroke(card, Theme.border, 1, 0.25)
+
+    local isRbxl = fileInfo.ftype == "RBXL"
 
     local typeBadge = Instance.new("Frame", card)
-    typeBadge.Size = UDim2.new(0, 48, 0, 16)
-    typeBadge.Position = UDim2.new(0, 6, 0, 6)
-    typeBadge.BackgroundColor3 = Color3.fromRGB(200, 40, 40)
-    Instance.new("UICorner", typeBadge).CornerRadius = UDim.new(0, 4)
+    typeBadge.Size = UDim2.new(0, 48, 0, 19)
+    typeBadge.Position = UDim2.new(0, 8, 0, 8)
+    typeBadge.BackgroundColor3 = isRbxl and Color3.fromRGB(55, 91, 145) or Color3.fromRGB(46, 73, 112)
+    typeBadge.BorderSizePixel = 0
+    round(typeBadge, 6)
+
+    local badgeIcon = Instance.new("ImageLabel", typeBadge)
+    badgeIcon.Size = UDim2.new(0, 11, 0, 11)
+    badgeIcon.Position = UDim2.new(0, 5, 0.5, -5.5)
+    badgeIcon.BackgroundTransparency = 1
+    badgeIcon.Image = isRbxl and ICONS.GAMEPAD or ICONS.FILE
+    badgeIcon.ImageColor3 = Color3.fromRGB(205, 225, 255)
+
+    local typeText = Instance.new("TextLabel", typeBadge)
+    typeText.Size = UDim2.new(1, -20, 1, 0)
+    typeText.Position = UDim2.new(0, 19, 0, 0)
+    typeText.BackgroundTransparency = 1
+    typeText.Text = fileInfo.ftype
+    typeText.TextColor3 = Color3.fromRGB(215, 230, 255)
+    typeText.Font = Enum.Font.GothamBold
+    typeText.TextSize = 8
 
     local nameLbl = Instance.new("TextLabel", card)
-    nameLbl.Size = UDim2.new(0.6, -60, 0, 16)
-    nameLbl.Position = UDim2.new(0, 60, 0, 6)
+    nameLbl.Size = UDim2.new(1, -170, 0, 17)
+    nameLbl.Position = UDim2.new(0, 64, 0, 7)
     nameLbl.BackgroundTransparency = 1
     nameLbl.Text = fileInfo.name
-    nameLbl.TextColor3 = Color3.fromRGB(255, 255, 255)
+    nameLbl.TextColor3 = Theme.text
     nameLbl.Font = Enum.Font.GothamBold
     nameLbl.TextSize = 10
     nameLbl.TextXAlignment = Enum.TextXAlignment.Left
+    nameLbl.TextTruncate = Enum.TextTruncate.AtEnd
 
-    local insertBtn = Instance.new("TextButton", card)
-    insertBtn.Size = UDim2.new(0, 66, 0, 24)
-    insertBtn.Position = UDim2.new(1, -72, 0.5, -12)
-    insertBtn.BackgroundColor3 = Color3.fromRGB(200, 40, 40)
-    insertBtn.Text = "INSERT"
-    insertBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-    insertBtn.Font = Enum.Font.GothamBold
-    insertBtn.TextSize = 8
-    Instance.new("UICorner", insertBtn).CornerRadius = UDim.new(0, 4)
+    local pathLbl = Instance.new("TextLabel", card)
+    pathLbl.Size = UDim2.new(1, -170, 0, 13)
+    pathLbl.Position = UDim2.new(0, 64, 0, 28)
+    pathLbl.BackgroundTransparency = 1
+    pathLbl.Text = fileInfo.path
+    pathLbl.TextColor3 = Theme.muted
+    pathLbl.Font = Enum.Font.Gotham
+    pathLbl.TextSize = 8
+    pathLbl.TextXAlignment = Enum.TextXAlignment.Left
+    pathLbl.TextTruncate = Enum.TextTruncate.AtEnd
+
+    local insertFrame = Instance.new("Frame", card)
+    insertFrame.Size = UDim2.new(0, 76, 0, 30)
+    insertFrame.Position = UDim2.new(1, -84, 0.5, -15)
+    insertFrame.BackgroundColor3 = Color3.fromRGB(30, 45, 67)
+    insertFrame.BorderSizePixel = 0
+    round(insertFrame, 8)
+    local btnStroke = stroke(insertFrame, Theme.accent, 1, 0.45)
+
+    local insertIcon = Instance.new("ImageLabel", insertFrame)
+    insertIcon.Size = UDim2.new(0, 12, 0, 12)
+    insertIcon.Position = UDim2.new(0, 7, 0.5, -6)
+    insertIcon.BackgroundTransparency = 1
+    insertIcon.Image = ICONS.DOWNLOAD
+    insertIcon.ImageColor3 = Theme.accentSoft
+
+    local insertText = Instance.new("TextLabel", insertFrame)
+    insertText.Size = UDim2.new(1, -24, 1, 0)
+    insertText.Position = UDim2.new(0, 22, 0, 0)
+    insertText.BackgroundTransparency = 1
+    insertText.Text = "INSERT"
+    insertText.TextColor3 = Theme.text
+    insertText.Font = Enum.Font.GothamBold
+    insertText.TextSize = 8
+
+    local insertBtn = Instance.new("TextButton", insertFrame)
+    insertBtn.Size = UDim2.new(1, 0, 1, 0)
+    insertBtn.BackgroundTransparency = 1
+    insertBtn.Text = ""
+
+    addHover(insertBtn, insertFrame, Color3.fromRGB(30, 45, 67), Color3.fromRGB(43, 66, 99))
+
+    insertBtn.MouseButton1Click:Connect(function()
+        if insertText.Text == "LOADING" then return end
+        insertText.Text = "LOADING"
+        insertIcon.Image = ICONS.REFRESH
+        insertFrame.BackgroundColor3 = Color3.fromRGB(37, 59, 88)
+
+        task.spawn(function()
+            local ok, msg = loadFile(fileInfo)
+            if ok then
+                insertText.Text = "DONE"
+                insertIcon.Image = ICONS.CHECK
+                insertFrame.BackgroundColor3 = Color3.fromRGB(48, 104, 73)
+                totalLoaded = totalLoaded + 1
+                StatsText.Text = string.format("Status: Ready  |  Files: %d  |  Loaded: %d", #Scroll:GetChildren() - 1, totalLoaded)
+                notify("Success", fileInfo.name .. " dimuat!", Theme.success)
+            else
+                insertText.Text = "FAIL"
+                insertIcon.Image = ICONS.ALERT
+                insertFrame.BackgroundColor3 = Color3.fromRGB(92, 43, 50)
+                notify("Gagal", msg, Theme.danger)
+            end
+            task.wait(2)
+            insertText.Text = "INSERT"
+            insertIcon.Image = ICONS.DOWNLOAD
+            insertFrame.BackgroundColor3 = Color3.fromRGB(30, 45, 67)
+        end)
+    end)
 end
 
 -- SEARCH & FILTER LOGIC
-
 local function filterCards(query)
     currentQuery = query:lower():gsub("^%s*", ""):gsub("%s*$", "")
     local anyVisible = false
@@ -1155,24 +1520,24 @@ end
 local function tryManualInsert(input)
     local query = input:gsub("^%s*", ""):gsub("%s*$", "")
     if query == "" then return end
-    -- Check against known files first
+
     for _, entry in ipairs(allFileCards) do
         if entry.fileInfo.name:lower() == query:lower() or entry.fileInfo.path:lower() == query:lower() then
-            notify("Memuat", entry.fileInfo.name, Color3.fromRGB(200, 230, 210))
+            notify("Memuat", entry.fileInfo.name, Theme.accent)
             task.spawn(function()
                 local ok, msg = loadFile(entry.fileInfo)
                 if ok then
                     totalLoaded = totalLoaded + 1
                     StatsText.Text = string.format("Status: Ready  |  Files: %d  |  Loaded: %d", #allFileCards, totalLoaded)
-                    notify("Success", entry.fileInfo.name .. " dimuat!", Color3.fromRGB(200, 200, 210))
+                    notify("Success", entry.fileInfo.name .. " dimuat!", Theme.success)
                 else
-                    notify("Gagal", msg, Color3.fromRGB(220, 80, 80))
+                    notify("Gagal", msg, Theme.danger)
                 end
             end)
             return
         end
     end
-    -- Manual path: try direct paths in scan folders
+
     local tryPaths = {
         query,
         "Delta/workspace/" .. query,
@@ -1180,7 +1545,7 @@ local function tryManualInsert(input)
         "delta/workspace/" .. query,
         "Android/Delta/workspace/" .. query,
     }
-    -- Add extensions if missing
+
     local withExt = {}
     for _, p in ipairs(tryPaths) do
         table.insert(withExt, p)
@@ -1190,6 +1555,7 @@ local function tryManualInsert(input)
             table.insert(withExt, p .. ".rbxl")
         end
     end
+
     for _, path in ipairs(withExt) do
         local name = path:match("([^/]+)$") or path
         local ftype = name:lower():match("%.rbxlx?$") and "RBXL" or (name:lower():match("%.rbxmx?$") and "RBXM" or nil)
@@ -1198,12 +1564,12 @@ local function tryManualInsert(input)
             local ok, msg = loadFile(fi)
             if ok then
                 totalLoaded = totalLoaded + 1
-                notify("Manual Insert OK", name .. " dimuat!", Color3.fromRGB(200, 200, 210))
+                notify("Manual Insert OK", name .. " dimuat!", Theme.success)
                 return
             end
         end
     end
-    notify("Tidak Ditemukan", query .. " tidak ada di folder manapun", Color3.fromRGB(220, 80, 80))
+    notify("Tidak Ditemukan", query .. " tidak ada di folder manapun", Theme.danger)
 end
 
 SearchInput:GetPropertyChangedSignal("Text"):Connect(function()
@@ -1228,9 +1594,10 @@ end)
 ScanClick.MouseButton1Click:Connect(function()
     ScanText.Text = "SCANNING..."
     ScanIcon.Image = ICONS.REFRESH
+    StatusDot.BackgroundColor3 = Theme.accent
 
-    for _, c in ipairs(Scroll:GetChildren()) do 
-        if c:IsA("Frame") and c ~= EmptyFrame then c:Destroy() end 
+    for _, c in ipairs(Scroll:GetChildren()) do
+        if c:IsA("Frame") and c ~= EmptyFrame then c:Destroy() end
     end
     allFileCards = {}
     EmptyFrame.Visible = true
@@ -1238,22 +1605,24 @@ ScanClick.MouseButton1Click:Connect(function()
 
     task.spawn(function()
         local foundFiles = scanAll()
-        for _, f in ipairs(foundFiles) do buildFileCard(f) end
+        for _, f in ipairs(foundFiles) do
+            buildFileCard(f)
+        end
 
         StatsText.Text = string.format("Status: Ready  |  Files: %d", #foundFiles)
+        StatusDot.BackgroundColor3 = Theme.success
         ScanText.Text = "SCAN FILES"
         ScanIcon.Image = ICONS.SEARCH
 
         if #foundFiles == 0 then
-            EmptyLabel.Text = "Tidak ada file RBXM/RBXL terdeteksi.\nPeriksa folder workspace executor."
+            EmptyLabel.Text = "No RBXM/RBXL files detected.\nCheck your executor workspace folder."
         else
-            notify("Scan Selesai", #foundFiles .. " file terdeteksi", Color3.fromRGB(220, 220, 230))
+            notify("Scan Selesai", #foundFiles .. " file terdeteksi", Theme.accent)
         end
     end)
 end)
 
 -- MINIMIZE / CLOSE
--- Close only hides the panel; the toggle below the Roblox menu stays available.
 CloseClick.MouseButton1Click:Connect(function()
     if Main.Visible then
         toggleMain()
@@ -1266,15 +1635,15 @@ MinClick.MouseButton1Click:Connect(function()
     if minimized then
         Content.Visible = false
         StatsBar.Visible = false
-        Main.Size = UDim2.new(0, 300, 0, 36)
+        Main.Size = UDim2.new(0, 390, 0, 62)
     else
         Content.Visible = true
         StatsBar.Visible = true
-        Main.Size = UDim2.new(0, 300, 0, 350)
+        Main.Size = UDim2.new(0, 390, 0, 470)
     end
 end)
 
---                                                                        
+
 -- HOOKS (Anti-Putus Studio Lite)
 --                                                                        
 task.spawn(function()
@@ -1360,7 +1729,7 @@ task.spawn(function()
                 pcall(function() LoadAssetsToSLServer(obj) end)
             end
             return obj
-        end) 
+        end)
     end
 end)
 
