@@ -1,4 +1,4 @@
--- HYAZ RBXL IMPORTER V1.3 BETA
+-- HYAZ RBXL IMPORTER V1.4
 -- Standalone RBXL binary importer extracted from HYAZ ULTIMATE.
 -- Focus: .rbxl binary parsing + decompression + instance reconstruction.
 -- RBXM/RBXMX/UI utama tidak ikut di file ini agar engine lebih mudah diuji.
@@ -17,7 +17,7 @@ _G.Hyaz_RAW_SOURCES = _G.Hyaz_RAW_SOURCES or {}
 -- CONFIG
 -- ============================================================
 local CONFIG = {
-    WindowName = "HYAZ RBXL IMPORTER V1.3 BETA",
+    WindowName = "HYAZ RBXL IMPORTER V1.4",
     ScanLabel = "SCAN RBXL",
     MaxFiles = 80,
     KeepPreviousImports = true,
@@ -300,39 +300,280 @@ local function _readCFrames(buffer, count)
     return out
 end
 
+local function _readUDim(buffer)
+    local scale = basicTypes.Float32(buffer)
+    local offset = basicTypes.Int32(buffer)
+    return UDim.new(scale, offset)
+end
+
+local function _readUDim2(buffer, count)
+    local xs = table.create(count)
+    local xo = table.create(count)
+    local ys = table.create(count)
+    local yo = table.create(count)
+
+    for i = 1, count do xs[i] = basicTypes.Float32(buffer) end
+    for i = 1, count do xo[i] = basicTypes.Int32(buffer) end
+    for i = 1, count do ys[i] = basicTypes.Float32(buffer) end
+    for i = 1, count do yo[i] = basicTypes.Int32(buffer) end
+
+    local out = table.create(count)
+    for i = 1, count do
+        out[i] = UDim2.new(xs[i], xo[i], ys[i], yo[i])
+    end
+    return out
+end
+
+local function _readRectArray(buffer, count)
+    local minv = _readVector2(buffer, count)
+    local maxv = _readVector2(buffer, count)
+    local out = table.create(count)
+    for i = 1, count do
+        out[i] = Rect.new(minv[i], maxv[i])
+    end
+    return out
+end
+
+local function _readFaces(buffer, count)
+    local out = table.create(count)
+    for i = 1, count do
+        out[i] = {
+            Right = string.byte(buffer:read()) ~= 0,
+            Top = string.byte(buffer:read()) ~= 0,
+            Back = string.byte(buffer:read()) ~= 0,
+            Left = string.byte(buffer:read()) ~= 0,
+            Bottom = string.byte(buffer:read()) ~= 0,
+            Front = string.byte(buffer:read()) ~= 0,
+        }
+    end
+    return out
+end
+
+local function _readAxes(buffer, count)
+    local out = table.create(count)
+    for i = 1, count do
+        out[i] = {
+            X = string.byte(buffer:read()) ~= 0,
+            Y = string.byte(buffer:read()) ~= 0,
+            Z = string.byte(buffer:read()) ~= 0,
+        }
+    end
+    return out
+end
+
+local function _readBrickColor(buffer, count)
+    local ids = basicTypes.unsignedIntArray(buffer, count)
+    local out = table.create(count)
+    for i = 1, count do
+        local ok, value = pcall(BrickColor.new, ids[i])
+        out[i] = ok and value or nil
+    end
+    return out
+end
+
+local function _readEnumArray(buffer, count)
+    -- Binary enum values are stored as interleaved unsigned integers.
+    return basicTypes.unsignedIntArray(buffer, count)
+end
+
+local function _readPhysicalProperties(buffer, count)
+    local out = table.create(count)
+    for i = 1, count do
+        local custom = string.byte(buffer:read()) ~= 0
+        if custom then
+            out[i] = {
+                CustomPhysicalProperties = true,
+                Density = buffer:readNumber("<f"),
+                Friction = buffer:readNumber("<f"),
+                Elasticity = buffer:readNumber("<f"),
+                FrictionWeight = buffer:readNumber("<f"),
+                ElasticityWeight = buffer:readNumber("<f"),
+            }
+        else
+            out[i] = nil
+        end
+    end
+    return out
+end
+
+local function _readColor3uint8(buffer, count)
+    local r = table.create(count)
+    local g = table.create(count)
+    local b = table.create(count)
+    for i = 1, count do r[i] = string.byte(buffer:read()) end
+    for i = 1, count do g[i] = string.byte(buffer:read()) end
+    for i = 1, count do b[i] = string.byte(buffer:read()) end
+
+    local out = table.create(count)
+    for i = 1, count do out[i] = Color3.fromRGB(r[i], g[i], b[i]) end
+    return out
+end
+
+local function _readSecurityCapabilities(buffer, count)
+    return basicTypes.unsignedIntArray(buffer, count)
+end
+
 local function _decodePropertyArray(buffer, typeID, count, sharedStrings)
+    -- Roblox binary property type IDs. Keep unknown types non-fatal so one
+    -- unsupported property cannot destroy the entire place import.
     if typeID == 0x01 then
         local a = table.create(count)
-        for i=1,count do a[i]=basicTypes.String(buffer) end
+        for i = 1, count do a[i] = basicTypes.String(buffer) end
         return a
+
     elseif typeID == 0x02 then
-        local a=table.create(count); for i=1,count do a[i]=string.byte(buffer:read())~=0 end; return a
-    elseif typeID == 0x03 then return basicTypes.Int32Array(buffer,count)
-    elseif typeID == 0x04 then return basicTypes.RbxF32Array(buffer,count)
-    elseif typeID == 0x05 then local a=table.create(count); for i=1,count do a[i]=basicTypes.Float64(buffer) end; return a
-    elseif typeID == 0x0B then local raw=basicTypes.unsignedIntArray(buffer,count); return raw
-    elseif typeID == 0x0C then return _readColor3(buffer,count)
-    elseif typeID == 0x0D then return _readVector2(buffer,count)
-    elseif typeID == 0x0E then return _readVector3(buffer,count)
-    elseif typeID == 0x10 then return _readCFrames(buffer,count)
-    elseif typeID == 0x12 then return basicTypes.unsignedIntArray(buffer,count)
-    elseif typeID == 0x13 then return basicTypes.RefArray(buffer,count)
+        local a = table.create(count)
+        for i = 1, count do a[i] = string.byte(buffer:read()) ~= 0 end
+        return a
+
+    elseif typeID == 0x03 then
+        return basicTypes.Int32Array(buffer, count)
+
+    elseif typeID == 0x04 then
+        return basicTypes.RbxF32Array(buffer, count)
+
+    elseif typeID == 0x05 then
+        local a = table.create(count)
+        for i = 1, count do a[i] = basicTypes.Float64(buffer) end
+        return a
+
+    elseif typeID == 0x06 then
+        return _readUDim(buffer, count)
+
+    elseif typeID == 0x07 then
+        return _readUDim2(buffer, count)
+
+    elseif typeID == 0x08 then
+        local a = table.create(count)
+        for i = 1, count do a[i] = Ray.new(
+            Vector3.new(
+                buffer:readNumber("<f"),
+                buffer:readNumber("<f"),
+                buffer:readNumber("<f")
+            ),
+            Vector3.new(
+                buffer:readNumber("<f"),
+                buffer:readNumber("<f"),
+                buffer:readNumber("<f")
+            )
+        ) end
+        return a
+
+    elseif typeID == 0x09 then
+        return _readFaces(buffer, count)
+
+    elseif typeID == 0x0A then
+        return _readAxes(buffer, count)
+
+    elseif typeID == 0x0B then
+        return _readBrickColor(buffer, count)
+
+    elseif typeID == 0x0C then
+        return _readColor3(buffer, count)
+
+    elseif typeID == 0x0D then
+        return _readVector2(buffer, count)
+
+    elseif typeID == 0x0E then
+        return _readVector3(buffer, count)
+
+    elseif typeID == 0x0F then
+        return _readVector2(buffer, count)
+
+    elseif typeID == 0x10 then
+        return _readCFrames(buffer, count)
+
+    elseif typeID == 0x11 then
+        return _readEnumArray(buffer, count)
+
+    elseif typeID == 0x12 then
+        return basicTypes.unsignedIntArray(buffer, count)
+
+    elseif typeID == 0x13 then
+        return basicTypes.RefArray(buffer, count)
+
     elseif typeID == 0x14 then
-        local a=table.create(count); for i=1,count do a[i]=Vector3int16.new(buffer:readNumber("<i2"),buffer:readNumber("<i2"),buffer:readNumber("<i2")) end; return a
+        local a = table.create(count)
+        for i = 1, count do
+            a[i] = Vector3int16.new(
+                buffer:readNumber("<i2"),
+                buffer:readNumber("<i2"),
+                buffer:readNumber("<i2")
+            )
+        end
+        return a
+
+    elseif typeID == 0x15 then
+        return _readPhysicalProperties(buffer, count)
+
+    elseif typeID == 0x16 then
+        return basicTypes.StringArray and basicTypes.StringArray(buffer, count) or
+            (function()
+                local a = table.create(count)
+                for i = 1, count do a[i] = basicTypes.String(buffer) end
+                return a
+            end)()
+
     elseif typeID == 0x17 then
-        local a=table.create(count); for i=1,count do a[i]=NumberRange.new(buffer:readNumber("<f"),buffer:readNumber("<f")) end; return a
+        local a = table.create(count)
+        for i = 1, count do
+            a[i] = NumberRange.new(buffer:readNumber("<f"), buffer:readNumber("<f"))
+        end
+        return a
+
     elseif typeID == 0x18 then
-        local xs=_readVector2(buffer,count); local ys=_readVector2(buffer,count); local a=table.create(count); for i=1,count do a[i]=Rect.new(xs[i],ys[i]) end; return a
+        return _readRectArray(buffer, count)
+
+    elseif typeID == 0x19 then
+        return _readPhysicalProperties(buffer, count)
+
     elseif typeID == 0x1A then
-        local rs=table.create(count); local gs=table.create(count); local bs=table.create(count); for i=1,count do rs[i]=string.byte(buffer:read()) end; for i=1,count do gs[i]=string.byte(buffer:read()) end; for i=1,count do bs[i]=string.byte(buffer:read()) end; local a=table.create(count); for i=1,count do a[i]=Color3.fromRGB(rs[i],gs[i],bs[i]) end; return a
-    elseif typeID == 0x1B then return basicTypes.Int64Array(buffer,count)
+        return _readColor3uint8(buffer, count)
+
+    elseif typeID == 0x1B then
+        return basicTypes.Int64Array(buffer, count)
+
     elseif typeID == 0x1C then
-        local idx=basicTypes.unsignedIntArray(buffer,count); local a=table.create(count); for i=1,count do a[i]=sharedStrings and sharedStrings[idx[i]] or nil end; return a
+        local idx = basicTypes.unsignedIntArray(buffer, count)
+        local a = table.create(count)
+        for i = 1, count do
+            a[i] = sharedStrings and sharedStrings[idx[i]] or nil
+        end
+        return a
+
+    elseif typeID == 0x1D then
+        -- Reserved/engine-specific payload. Do not pretend this is Source.
+        -- Preserve the raw bytes only when the surrounding property can be
+        -- represented safely; otherwise leave it undecoded.
+        return nil
+
+    elseif typeID == 0x1E then
+        return _readSecurityCapabilities(buffer, count)
+
     elseif typeID == 0x1F then
-        local a=table.create(count); for i=1,count do a[i]={Index=buffer:readNumber("<I4"),Time=buffer:readNumber("<I4"),Random=buffer:readNumber("<I8")} end; return a
+        local a = table.create(count)
+        for i = 1, count do
+            a[i] = {
+                Index = buffer:readNumber("<I4"),
+                Time = buffer:readNumber("<I4"),
+                Random = buffer:readNumber("<I8"),
+            }
+        end
+        return a
+
     elseif typeID == 0x20 then
-        local a=table.create(count); for i=1,count do local family=basicTypes.String(buffer); local weight=buffer:readNumber("<I2"); local style=string.byte(buffer:read()); local cached=basicTypes.String(buffer); a[i]={Family=family,Weight=weight,Style=style,CachedFaceId=cached} end; return a
+        local a = table.create(count)
+        for i = 1, count do
+            a[i] = {
+                Family = basicTypes.String(buffer),
+                Weight = buffer:readNumber("<I2"),
+                Style = string.byte(buffer:read()),
+                CachedFaceId = basicTypes.String(buffer),
+            }
+        end
+        return a
     end
+
     return nil
 end
 
@@ -355,7 +596,11 @@ local function parseRBXLBinary(data)
         chunks[sig][#chunks[sig]+1]={Data=payload}
     end
     local shared={}
-    for _,ch in ipairs(chunks.SSTR) do local b=Buffer(ch.Data,false); local ver=b:readNumber("<I4"); local n=b:readNumber("<I4"); for i=1,n do b:read(16); shared[i]=basicTypes.String(b) end end
+    for _,ch in ipairs(chunks.SSTR) do local b=Buffer(ch.Data,false); local ver=b:readNumber("<I4"); local n=b:readNumber("<I4"); for i=1,n do
+            local hash = b:read(16)
+            local value = basicTypes.String(b)
+            shared[i] = value
+        end end
     local classes={}; local nodes={}; local serviceRefs={}
     for _,ch in ipairs(chunks.INST) do
         local b=Buffer(ch.Data,false); local cid=b:readNumber("<I4"); local cname=basicTypes.String(b); local format=string.byte(b:read()); local n=b:readNumber("<I4"); local refs=basicTypes.RefArray(b,n)
@@ -368,7 +613,19 @@ local function parseRBXLBinary(data)
         local b=Buffer(ch.Data,false); local cid=b:readNumber("<I4"); local cls=classes[cid]; if not cls then return nil,"PROP class id tidak ditemukan: "..cid end
         local pname=basicTypes.String(b); local typeID=string.byte(b:read())
         local vals=_decodePropertyArray(b,typeID,cls.Count,shared)
-        if vals then for i,ref in ipairs(cls.Refs) do if nodes[ref] then nodes[ref].Properties[pname]=vals[i] end end end
+        if vals then
+            for i,ref in ipairs(cls.Refs) do
+                if nodes[ref] then
+                    nodes[ref].Properties[pname]=vals[i]
+                    -- Common binary-name aliases used by Roblox objects.
+                    if pname == "size" then nodes[ref].Properties.Size = vals[i] end
+                    if pname == "shape" then nodes[ref].Properties.Shape = vals[i] end
+                    if pname == "Color3uint8" then nodes[ref].Properties.Color3uint8 = vals[i] end
+                    if pname == "Source" then nodes[ref].Properties.Source = vals[i] end
+                    if pname == "ContentText" then nodes[ref].Properties.ContentText = vals[i] end
+                end
+            end
+        end
     end
     local childToParent={}
     for _,ch in ipairs(chunks.PRNT) do local b=Buffer(ch.Data,false); local ver=string.byte(b:read()); if ver~=0 then return nil,"PRNT version tidak didukung" end; local n=b:readNumber("<I4"); local children=basicTypes.RefArray(b,n); local parents=basicTypes.RefArray(b,n); for i=1,n do childToParent[children[i]]=parents[i] end end
@@ -565,6 +822,46 @@ local function createRBXLInstances(parsed, sourceName)
             end
         end
 
+        -- GUI layout: these must retain their UDim/UDim2 components instead
+        -- of being approximated as Vector2 values.
+        if obj:IsA("GuiObject") then
+            safeSet(obj, "Position", props.Position)
+            safeSet(obj, "Size", props.Size)
+            safeSet(obj, "AnchorPoint", props.AnchorPoint)
+            safeSet(obj, "Rotation", props.Rotation)
+            safeSet(obj, "Visible", props.Visible)
+            safeSet(obj, "ZIndex", props.ZIndex)
+            safeSet(obj, "LayoutOrder", props.LayoutOrder)
+            safeSet(obj, "AutomaticSize", props.AutomaticSize)
+        end
+
+        if obj:IsA("ScrollingFrame") then
+            safeSet(obj, "CanvasSize", props.CanvasSize)
+            safeSet(obj, "CanvasPosition", props.CanvasPosition)
+            safeSet(obj, "ScrollBarThickness", props.ScrollBarThickness)
+            safeSet(obj, "ScrollingDirection", props.ScrollingDirection)
+            safeSet(obj, "ElasticBehavior", props.ElasticBehavior)
+        end
+
+        if obj:IsA("TextLabel") or obj:IsA("TextButton") or obj:IsA("TextBox") then
+            safeSet(obj, "Text", props.Text)
+            safeSet(obj, "TextSize", props.TextSize)
+            safeSet(obj, "TextScaled", props.TextScaled)
+            safeSet(obj, "TextWrapped", props.TextWrapped)
+            safeSet(obj, "TextColor3", props.TextColor3)
+            safeSet(obj, "TextTransparency", props.TextTransparency)
+            safeSet(obj, "TextXAlignment", props.TextXAlignment)
+            safeSet(obj, "TextYAlignment", props.TextYAlignment)
+            safeSet(obj, "Font", props.Font)
+        end
+
+        if obj:IsA("ImageLabel") or obj:IsA("ImageButton") then
+            safeSet(obj, "Image", props.Image)
+            safeSet(obj, "ImageColor3", props.ImageColor3)
+            safeSet(obj, "ImageTransparency", props.ImageTransparency)
+            safeSet(obj, "ScaleType", props.ScaleType)
+        end
+
         safeSet(obj, "Archivable", props.Archivable)
         safeSet(obj, "Enabled", props.Enabled)
         safeSet(obj, "Visible", props.Visible)
@@ -655,13 +952,10 @@ local function createRBXLInstances(parsed, sourceName)
     -- imported file contains StarterPlayerScripts/StarterCharacterScripts.
     local sp = groups.SP
     if sp then
-        for _, child in ipairs(sp:GetChildren()) do
-            if child.Name == "StarterPlayerScripts" then
-                child.Name = "SPS"
-            elseif child.Name == "StarterCharacterScripts" then
-                child.Name = "SCS"
-            end
-        end
+        local sps = sp:FindFirstChild("StarterPlayerScripts")
+        if sps then sps.Name = "SPS" end
+        local scs = sp:FindFirstChild("StarterCharacterScripts")
+        if scs then scs.Name = "SCS" end
     end
 
     local failedList = {}
@@ -820,7 +1114,7 @@ local old = GuiParent:FindFirstChild("HYAZ_RBXL_IMPORTER_V12")
 if old then old:Destroy() end
 
 local gui = Instance.new("ScreenGui")
-gui.Name = "HYAZ_RBXL_IMPORTER_V13"
+gui.Name = "HYAZ_RBXL_IMPORTER_V14"
 gui.ResetOnSpawn = false
 gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 gui.Parent = GuiParent
@@ -938,7 +1232,7 @@ local version = Instance.new("TextLabel")
 version.Size = UDim2.new(1, -125, 0, 18)
 version.Position = UDim2.fromOffset(15, 39)
 version.BackgroundTransparency = 1
-version.Text = "V1.3 BETA • RBXL SOURCE ENGINE • DELTA WORKSPACE"
+version.Text = "V1.4 • PROP ENGINE • DELTA WORKSPACE"
 version.TextColor3 = Color3.fromRGB(145, 150, 165)
 version.Font = Enum.Font.Gotham
 version.TextSize = 9
@@ -1073,10 +1367,10 @@ scanFiles()
 
 -- Expose engine for the main HYAZ UI later without duplicating the parser.
 _G.HYAZ_RBXL_IMPORTER = {
-    Version = "V1.3 BETA",
+    Version = "V1.4",
     Parse = parseRBXLBinary,
     Import = importRBXL,
     Scan = collectRBXL,
 }
 
-print("[HYAZ RBXL IMPORTER V1.3 BETA] READY")
+print("[HYAZ RBXL IMPORTER V1.4] READY")
