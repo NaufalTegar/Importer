@@ -1,9 +1,9 @@
 -- HYAZ // STABLE BUILD - KING HYAZ GLITCH LOADING
 --[[
                                                                             
-       Hyaz IMPORTER v62.0 - Dynamic Animated Gradient & Vector Icons     
+       Hyaz IMPORTER v62.0 - RBXM + RBXL Local Asset Loader     
        Features: Real-time UI Animations, Verified Asset Mapping            
-       Supports: RBXM, RBXL, RBXLX, RBXMX                                   
+       Supports: RBXM, RBXMX, RBXL, RBXLX                                   
                                                                             
 ]]
 
@@ -481,31 +481,114 @@ local function insertObjects(objects, isRbxl, sourceMap)
     return count
 end
 
-local function safeReadFile(p) if not readfile then return nil end; local ok, d = pcall(readfile, p); return ok and d or nil end
+local function safeReadFile(p)
+    if not readfile then return nil end
+    local ok, d = pcall(readfile, p)
+    return ok and d or nil
+end
+
+-- Normalize every loader result into an array of Instances.
+-- Some environments return a single Instance from LoadLocalAsset, while
+-- GetObjects normally returns an array.
+local function normalizeLoadedObjects(value)
+    if typeof(value) == "Instance" then
+        return { value }
+    end
+    if type(value) == "table" then
+        local out = {}
+        for _, item in ipairs(value) do
+            if typeof(item) == "Instance" then
+                table.insert(out, item)
+            end
+        end
+        return out
+    end
+    return {}
+end
+
+-- RBXL/RBXLX needs slightly different handling from RBXM/RBXMX.
+-- A place file can contain service roots (Workspace, Lighting, StarterGui,
+-- ReplicatedStorage, etc.), so we load the roots first and then merge their
+-- children into the matching services.
+local function loadRBXL(fileInfo, sourceMap)
+    local attempts = {}
+
+    -- Preferred path when the executor exposes InsertService:LoadLocalAsset.
+    if InsertService and InsertService.LoadLocalAsset then
+        table.insert(attempts, function()
+            return InsertService:LoadLocalAsset(fileInfo.path)
+        end)
+    end
+
+    -- Common local-file bridge used by executor environments.
+    if getcustomasset then
+        table.insert(attempts, function()
+            local asset = getcustomasset(fileInfo.path)
+            if not asset then return nil end
+            return game:GetObjects(asset)
+        end)
+    end
+
+    -- Fallbacks for environments that expose local files through rbxasset://.
+    table.insert(attempts, function()
+        return game:GetObjects("rbxasset://" .. fileInfo.path)
+    end)
+
+    table.insert(attempts, function()
+        return game:GetObjects(fileInfo.path)
+    end)
+
+    local lastError = "RBXL loader tidak tersedia"
+    for index, loader in ipairs(attempts) do
+        local ok, result = pcall(loader)
+        if ok then
+            local objects = normalizeLoadedObjects(result)
+            if #objects > 0 then
+                local count = insertObjects(objects, true, sourceMap)
+                if count > 0 then
+                    return true, string.format("RBXL berhasil dimuat • %d object(s)", count)
+                end
+                lastError = "File terbaca tetapi tidak ada object yang dapat dipindahkan"
+            end
+        else
+            lastError = tostring(result)
+        end
+    end
+
+    return false, "RBXL gagal dimuat: " .. lastError
+end
 
 local function loadFile(fileInfo)
     local isRbxl = fileInfo.ftype == "RBXL"
     local data = safeReadFile(fileInfo.path)
-    if not data or #data == 0 then return false, "readfile gagal" end
+    if not data or #data == 0 then return false, "readfile gagal: " .. tostring(fileInfo.path) end
+
+    -- RBXM/RBXMX keeps the original source-map parser. RBXL/RBXLX uses the
+    -- dedicated place loader above because it can contain service roots.
+    if isRbxl then
+        return loadRBXL(fileInfo, {})
+    end
 
     local sourceMap = {}
-    if not isRbxl then
-        local ok, sources, err = pcall(parseRBXMForSources, data)
-        if ok and sources then sourceMap = sources end
-    end
+    local ok, sources = pcall(parseRBXMForSources, data)
+    if ok and sources then sourceMap = sources end
 
     if getcustomasset then
         local ok1, aid = pcall(getcustomasset, fileInfo.path)
         if ok1 and aid then
             local ok2, objs = pcall(function() return game:GetObjects(aid) end)
-            if ok2 and objs and #objs > 0 then return true, insertObjects(objs, isRbxl, sourceMap) .. " object(s) loaded" end
+            if ok2 and objs and #objs > 0 then
+                return true, insertObjects(objs, false, sourceMap) .. " object(s) loaded"
+            end
         end
     end
 
     local ok3, o3 = pcall(function() return game:GetObjects("rbxasset://" .. fileInfo.path) end)
-    if ok3 and o3 and #o3 > 0 then return true, insertObjects(o3, isRbxl, sourceMap) .. " object(s) loaded" end
+    if ok3 and o3 and #o3 > 0 then
+        return true, insertObjects(o3, false, sourceMap) .. " object(s) loaded"
+    end
 
-    return false, "Semua metode load gagal"
+    return false, "Semua metode RBXM loader gagal"
 end
 
 --                                                                        
