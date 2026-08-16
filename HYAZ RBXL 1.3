@@ -1,4 +1,4 @@
--- HYAZ RBXL IMPORTER V1.1
+-- HYAZ RBXL IMPORTER V1.3 BETA
 -- Standalone RBXL binary importer extracted from HYAZ ULTIMATE.
 -- Focus: .rbxl binary parsing + decompression + instance reconstruction.
 -- RBXM/RBXMX/UI utama tidak ikut di file ini agar engine lebih mudah diuji.
@@ -17,7 +17,7 @@ _G.Hyaz_RAW_SOURCES = _G.Hyaz_RAW_SOURCES or {}
 -- CONFIG
 -- ============================================================
 local CONFIG = {
-    WindowName = "HYAZ RBXL IMPORTER V1.1",
+    WindowName = "HYAZ RBXL IMPORTER V1.3 BETA",
     ScanLabel = "SCAN RBXL",
     MaxFiles = 80,
     KeepPreviousImports = true,
@@ -301,8 +301,10 @@ local function _readCFrames(buffer, count)
 end
 
 local function _decodePropertyArray(buffer, typeID, count, sharedStrings)
-    if typeID == 0x01 or typeID == 0x1D then
-        local a = table.create(count); for i=1,count do a[i]=basicTypes.String(buffer) end; return a
+    if typeID == 0x01 then
+        local a = table.create(count)
+        for i=1,count do a[i]=basicTypes.String(buffer) end
+        return a
     elseif typeID == 0x02 then
         local a=table.create(count); for i=1,count do a[i]=string.byte(buffer:read())~=0 end; return a
     elseif typeID == 0x03 then return basicTypes.Int32Array(buffer,count)
@@ -379,147 +381,301 @@ local function parseRBXLBinary(data)
 end
 
 local function createRBXLInstances(parsed, sourceName)
-    local folder=Instance.new("Folder")
-    folder.Name=(sourceName or "RBXL") .. " [RBXL BETA]"
-    local made={}
+    local folder = Instance.new("Folder")
+    folder.Name = (sourceName or "RBXL") .. " [RBXL BETA]"
+    local made = {}
+    local createdCount = 0
+    local failedCount = 0
+    local failedClasses = {}
 
-    -- A place contains service roots, but an imported file cannot recreate the
-    -- DataModel/services themselves. Keep the original service intent by
-    -- putting each service's children into a clearly named folder.
+    -- Studio Lite does not expose every DataModel service. These are only
+    -- organizational folders inside the import container, never real services.
+    -- Keep the names aligned with Studio Lite's compact explorer.
     local SERVICE_GROUPS = {
-        Workspace="WS", ReplicatedStorage="RS", ReplicatedFirst="RF",
-        ServerStorage="SS", ServerScriptService="SSS", StarterGui="SG",
-        StarterPack="SP", StarterPlayer="StarterPlayer", Lighting="Lighting",
-        SoundService="SoundService", Teams="Teams", MaterialService="MaterialService",
-        PhysicsService="PhysicsService", CollectionService="CollectionService",
-        TextChatService="TextChatService", Chat="Chat", LocalizationService="LocalizationService",
-        TestService="TestService", VoiceChatService="VoiceChatService",
-        NetworkClient="NetworkClient", NetworkServer="NetworkServer"
+        Workspace = "WS",
+        ReplicatedFirst = "RF",
+        ReplicatedStorage = "RS",
+        Players = "Player",
+        Lighting = "Lighting",
+        StarterPlayer = "SP",
+        StarterGui = "SG",
+        StarterPack = "SPack",
+        Teams = "Teams",
+        ServerScriptService = "SSS",
+        ServerStorage = "SS",
     }
-    local groups={}
-    local function getGroup(key)
-        if groups[key] then return groups[key] end
-        local g=Instance.new("Folder")
-        g.Name=key
-        g.Parent=folder
-        groups[key]=g
+
+    local groups = {}
+    local function getGroup(name)
+        if groups[name] then return groups[name] end
+        local g = Instance.new("Folder")
+        g.Name = name
+        g.Parent = folder
+        groups[name] = g
         return g
     end
-    local wsGroup=getGroup("WS")
 
     local function safeSet(obj, property, value)
-        if value==nil then return false end
-        local ok=pcall(function() obj[property]=value end)
-        return ok
+        if value == nil then return false end
+        return pcall(function() obj[property] = value end)
     end
 
     local function applyEnum(obj, property, enumType, value)
-        if value==nil then return end
-        pcall(function() obj[property]=enumType:FromValue(value) end)
+        if value == nil then return end
+        pcall(function() obj[property] = enumType:FromValue(value) end)
     end
 
     local function applyProps(obj, props)
-        -- Canonical aliases used by the binary format. In particular, Part
-        -- uses lowercase "size" and "Color3uint8" in many RBXL files.
-        safeSet(obj,"Name",props.Name)
+        -- Keep the property aliases that were fixed in the working RBXL build.
+        safeSet(obj, "Name", props.Name)
+
         if obj:IsA("BasePart") then
-            safeSet(obj,"Anchored",props.Anchored)
-            safeSet(obj,"CanCollide",props.CanCollide)
-            safeSet(obj,"CanQuery",props.CanQuery)
-            safeSet(obj,"CanTouch",props.CanTouch)
-            safeSet(obj,"CastShadow",props.CastShadow)
-            safeSet(obj,"Massless",props.Massless)
-            safeSet(obj,"Locked",props.Locked)
-            safeSet(obj,"Size",props.Size or props.size)
-            safeSet(obj,"CFrame",props.CFrame)
-            safeSet(obj,"Color",props.Color or props.Color3uint8)
-            safeSet(obj,"Transparency",props.Transparency)
-            safeSet(obj,"Reflectance",props.Reflectance)
-            safeSet(obj,"CollisionGroup",props.CollisionGroup)
-            safeSet(obj,"MaterialVariant",props.MaterialVariant or props.MaterialVariantSerialized)
-            applyEnum(obj,"Material",Enum.Material,props.Material)
-            applyEnum(obj,"Shape",Enum.PartType,props.shape)
-            for _,side in ipairs({"Top","Bottom","Left","Right","Front","Back"}) do
-                applyEnum(obj,side.."Surface",Enum.SurfaceType,props[side.."Surface"])
-                applyEnum(obj,side.."SurfaceInput",Enum.InputType,props[side.."SurfaceInput"])
+            safeSet(obj, "Anchored", props.Anchored)
+            safeSet(obj, "CanCollide", props.CanCollide)
+            safeSet(obj, "CanQuery", props.CanQuery)
+            safeSet(obj, "CanTouch", props.CanTouch)
+            safeSet(obj, "CastShadow", props.CastShadow)
+            safeSet(obj, "Massless", props.Massless)
+            safeSet(obj, "Locked", props.Locked)
+            safeSet(obj, "Size", props.Size or props.size)
+            safeSet(obj, "CFrame", props.CFrame)
+            safeSet(obj, "Color", props.Color or props.Color3uint8)
+            safeSet(obj, "Transparency", props.Transparency)
+            safeSet(obj, "Reflectance", props.Reflectance)
+            safeSet(obj, "CollisionGroup", props.CollisionGroup)
+            safeSet(obj, "MaterialVariant", props.MaterialVariant or props.MaterialVariantSerialized)
+            applyEnum(obj, "Material", Enum.Material, props.Material)
+            applyEnum(obj, "Shape", Enum.PartType, props.shape)
+            for _, side in ipairs({"Top","Bottom","Left","Right","Front","Back"}) do
+                applyEnum(obj, side.."Surface", Enum.SurfaceType, props[side.."Surface"])
+                applyEnum(obj, side.."SurfaceInput", Enum.InputType, props[side.."SurfaceInput"])
             end
-            safeSet(obj,"Velocity",props.Velocity)
-            safeSet(obj,"RotVelocity",props.RotVelocity)
+            safeSet(obj, "Velocity", props.Velocity)
+            safeSet(obj, "RotVelocity", props.RotVelocity)
         end
 
         if obj:IsA("MeshPart") then
-            safeSet(obj,"MeshId",props.MeshId)
-            safeSet(obj,"TextureID",props.TextureID)
+            safeSet(obj, "MeshId", props.MeshId)
+            safeSet(obj, "TextureID", props.TextureID)
         end
+
         if obj:IsA("Sound") then
-            safeSet(obj,"SoundId",props.SoundId)
-            safeSet(obj,"Volume",props.Volume)
-            safeSet(obj,"PlaybackSpeed",props.PlaybackSpeed)
-            safeSet(obj,"Looped",props.Looped)
-            safeSet(obj,"Playing",props.Playing)
-            safeSet(obj,"TimePosition",props.TimePosition)
-            applyEnum(obj,"RollOffMode",Enum.RollOffMode,props.RollOffMode)
+            safeSet(obj, "SoundId", props.SoundId)
+            safeSet(obj, "Volume", props.Volume)
+            safeSet(obj, "PlaybackSpeed", props.PlaybackSpeed)
+            safeSet(obj, "Looped", props.Looped)
+            safeSet(obj, "Playing", props.Playing)
+            safeSet(obj, "TimePosition", props.TimePosition)
+            applyEnum(obj, "RollOffMode", Enum.RollOffMode, props.RollOffMode)
         end
-        if obj:IsA("Animation") then safeSet(obj,"AnimationId",props.AnimationId) end
+
+        if obj:IsA("Animation") then
+            safeSet(obj, "AnimationId", props.AnimationId)
+        end
+
         if obj:IsA("Tool") then
-            safeSet(obj,"TextureId",props.TextureId)
-            safeSet(obj,"ToolTip",props.ToolTip)
-            safeSet(obj,"CanBeDropped",props.CanBeDropped)
-            safeSet(obj,"Enabled",props.Enabled)
-            safeSet(obj,"RequiresHandle",props.RequiresHandle)
+            safeSet(obj, "TextureId", props.TextureId)
+            safeSet(obj, "ToolTip", props.ToolTip)
+            safeSet(obj, "CanBeDropped", props.CanBeDropped)
+            safeSet(obj, "Enabled", props.Enabled)
+            safeSet(obj, "RequiresHandle", props.RequiresHandle)
         end
+
+        -- Source is a ProtectedString in Roblox, encoded through RBXL's
+        -- string-like TypeID 0x01. Studio Lite may expose the Script object but
+        -- reject direct Source writes, so V1.3 uses several safe fallbacks.
         if obj:IsA("Script") or obj:IsA("LocalScript") or obj:IsA("ModuleScript") then
-            local source=props.Source or props.ContentText
-            if type(source)=="string" and #source>0 then
-                pcall(function() obj.Source=source end)
-                pcall(function() _G.Hyaz_RAW_SOURCES[obj]=source end)
+            local source = props.Source or props.ContentText
+            if type(source) == "string" then
+                source = source:gsub("\0+$", "")
+
+                -- Studio-Lite compatibility: keep SoundService under the
+                -- imported WS group and rewrite common runtime service paths.
+                local function compatSource(src)
+                    src = src:gsub("game:GetService%s*%(%s*[\"']SoundService[\"']%s*%)", "workspace.WS.SoundService")
+                    src = src:gsub("game%.SoundService", "workspace.WS.SoundService")
+                    return src
+                end
+                source = compatSource(source)
+
+                _G.Hyaz_RAW_SOURCES[obj] = source
+
+                local written = false
+                local ok = pcall(function() obj.Source = source end)
+                written = ok and tostring(obj.Source or "") == source
+
+                -- Common executor/runtime fallback for protected properties.
+                if not written and type(setscriptable) == "function" then
+                    pcall(function() setscriptable(obj, "Source", true) end)
+                    local ok2 = pcall(function() obj.Source = source end)
+                    if ok2 then written = true end
+                end
+
+                -- Studio/Studio-Lite ScriptEditorService fallback when exposed.
+                if not written then
+                    pcall(function()
+                        local ScriptEditorService = game:GetService("ScriptEditorService")
+                        if ScriptEditorService and ScriptEditorService.UpdateSourceAsync then
+                            ScriptEditorService:UpdateSourceAsync(obj, function()
+                                return source
+                            end)
+                            written = true
+                        end
+                    end)
+                end
+
+                -- Studio Lite's script UI uses a CodeTextBox companion. This
+                -- keeps the decoded source visible even when Source is locked.
+                pcall(function()
+                    local slFolder = ReplicatedStorage:FindFirstChild("StudioLiteFolder")
+                    local serverFuncs = slFolder and slFolder:FindFirstChild("ServerFunctions")
+                    if not serverFuncs then return end
+
+                    local existing = obj:FindFirstChild("SL_CodeTextBox")
+                    if existing and existing:IsA("TextBox") then
+                        existing.Text = source
+                        return
+                    end
+
+                    local map = {
+                        Script = "InsertScriptScript",
+                        LocalScript = "InsertLocalScriptLocalScript",
+                        ModuleScript = "InsertModuleScriptModuleScript",
+                    }
+                    local assetName = map[obj.ClassName]
+                    if not assetName then return end
+
+                    serverFuncs:InvokeServer("LoadAssetToPlayerGui", assetName)
+                    local guiF = LocalPlayer:WaitForChild("PlayerGui"):WaitForChild(assetName, 3)
+                    if not guiF then return end
+
+                    for _, child in ipairs(guiF:GetChildren()) do
+                        local clone = child:Clone()
+                        clone.Parent = obj
+                    end
+                    pcall(function()
+                        serverFuncs:InvokeServer("ClearAssetFromPlayerGui", assetName)
+                    end)
+
+                    local tb = obj:FindFirstChild("SL_CodeTextBox")
+                    if tb and tb:IsA("TextBox") then
+                        tb.Text = source
+                    end
+                end)
             end
         end
-        -- Generic safe properties that are common across many classes.
-        safeSet(obj,"Archivable",props.Archivable)
-        safeSet(obj,"Enabled",props.Enabled)
-        safeSet(obj,"Visible",props.Visible)
-        safeSet(obj,"Text",props.Text)
-        safeSet(obj,"Image",props.Image)
-        safeSet(obj,"Texture",props.Texture)
-        safeSet(obj,"Value",props.Value)
+
+        safeSet(obj, "Archivable", props.Archivable)
+        safeSet(obj, "Enabled", props.Enabled)
+        safeSet(obj, "Visible", props.Visible)
+        safeSet(obj, "Text", props.Text)
+        safeSet(obj, "Image", props.Image)
+        safeSet(obj, "Texture", props.Texture)
+        safeSet(obj, "Value", props.Value)
     end
 
     local function makeNode(node)
-        if node.IsService or node.Service then return nil end
-        local ok,obj=pcall(Instance.new,node.ClassName)
-        if not ok or not obj then return nil end
-        made[node.Ref]=obj
-        applyProps(obj,node.Properties)
-        for _,child in ipairs(node.Children) do
-            local c=makeNode(child)
-            if c then c.Parent=obj end
+        -- Service instances themselves cannot be recreated in Studio Lite.
+        if node.IsService or node.Service then
+            return nil
         end
+
+        local ok, obj = pcall(Instance.new, node.ClassName)
+        if not ok or not obj then
+            failedCount += 1
+            failedClasses[node.ClassName] = (failedClasses[node.ClassName] or 0) + 1
+            return nil
+        end
+
+        createdCount += 1
+        made[node.Ref] = obj
+        applyProps(obj, node.Properties)
+
+        -- IMPORTANT: use the same recursive construction order as the
+        -- previously working V1.7 build. Grouping happens only at the roots.
+        for _, child in ipairs(node.Children) do
+            local c = makeNode(child)
+            if c then
+                c.Parent = obj
+            end
+        end
+
         return obj
     end
 
-    local function importChildren(root, parent)
-        for _,child in ipairs(root.Children) do
-            local obj=makeNode(child)
-            if obj then obj.Parent=parent end
-        end
-    end
-
-    -- Preserve service grouping while still keeping everything under the
-    -- single import folder. Non-service roots are treated as Workspace.
-    for _,root in ipairs(parsed.Roots) do
+    -- Root service grouping. We never move individual descendants out of
+    -- their original hierarchy; only the top-level service container changes.
+    for _, root in ipairs(parsed.Roots) do
         if root.IsService or root.Service then
-            local key=SERVICE_GROUPS[root.ClassName] or root.ClassName
-            importChildren(root,getGroup(key))
+            local key = SERVICE_GROUPS[root.ClassName]
+
+            if root.ClassName == "StarterPlayer" then
+                key = "SP"
+            end
+
+            if root.ClassName == "SoundService" then
+                -- Studio Lite has no native SoundService. Keep a compatible
+                -- container inside the imported Workspace group.
+                local ws = getGroup("WS")
+                local soundService = ws:FindFirstChild("SoundService")
+                if not soundService then
+                    soundService = Instance.new("Folder")
+                    soundService.Name = "SoundService"
+                    soundService.Parent = ws
+                end
+                for _, child in ipairs(root.Children) do
+                    local obj = makeNode(child)
+                    if obj then obj.Parent = soundService end
+                end
+            elseif key then
+                local group = getGroup(key)
+                for _, child in ipairs(root.Children) do
+                    local obj = makeNode(child)
+                    if obj then obj.Parent = group end
+                end
+            else
+                -- Unknown/unavailable service: preserve it instead of silently
+                -- discarding its contents.
+                local group = getGroup(root.ClassName)
+                for _, child in ipairs(root.Children) do
+                    local obj = makeNode(child)
+                    if obj then obj.Parent = group end
+                end
+            end
         else
-            local obj=makeNode(root)
-            if obj then obj.Parent=wsGroup end
+            -- Non-service root belongs to the imported Workspace group.
+            local obj = makeNode(root)
+            if obj then
+                obj.Parent = getGroup("WS")
+            end
         end
     end
 
-    return folder, made
-end
+    -- Keep the compact Studio Lite structure: SPS/SCS stay under SP when the
+    -- imported file contains StarterPlayerScripts/StarterCharacterScripts.
+    local sp = groups.SP
+    if sp then
+        for _, child in ipairs(sp:GetChildren()) do
+            if child.Name == "StarterPlayerScripts" then
+                child.Name = "SPS"
+            elseif child.Name == "StarterCharacterScripts" then
+                child.Name = "SCS"
+            end
+        end
+    end
 
+    local failedList = {}
+    for className, count in pairs(failedClasses) do
+        table.insert(failedList, className .. " x" .. count)
+    end
+    table.sort(failedList)
+
+    return folder, made, {
+        Created = createdCount,
+        Failed = failedCount,
+        FailedClasses = failedList,
+    }
+end
 
 
 -- ============================================================
@@ -623,7 +779,7 @@ local function importRBXL(path)
     local sourceName = path:match("([^/\\]+)$") or "RBXL"
     sourceName = sourceName:gsub("%.rbxl$", "")
 
-    local buildOK, folder, made = pcall(function()
+    local buildOK, folder, made, stats = pcall(function()
         return createRBXLInstances(parsed, sourceName)
     end)
     if not buildOK or not folder then
@@ -632,17 +788,39 @@ local function importRBXL(path)
 
     folder.Parent = workspace
     local count = #folder:GetDescendants()
-    return true, string.format("%s object(s) imported | %d class | %d instance", count, parsed.Header.ClassCount, parsed.Header.InstanceCount)
+
+    local sourceCount = 0
+    for _, obj in ipairs(folder:GetDescendants()) do
+        if obj:IsA("Script") or obj:IsA("LocalScript") or obj:IsA("ModuleScript") then
+            if _G.Hyaz_RAW_SOURCES[obj] and #_G.Hyaz_RAW_SOURCES[obj] > 0 then
+                sourceCount += 1
+            end
+        end
+    end
+
+    local detail = string.format(
+        "%d object(s) dibuat | %d/%d instance | %d class | %d script source",
+        count, stats and stats.Created or count, parsed.Header.InstanceCount, parsed.Header.ClassCount, sourceCount
+    )
+
+    if stats and stats.Failed > 0 then
+        detail = detail .. " | gagal: " .. stats.Failed
+        if stats.FailedClasses and #stats.FailedClasses > 0 then
+            detail = detail .. " [" .. table.concat(stats.FailedClasses, ", ") .. "]"
+        end
+    end
+
+    return true, detail
 end
 
 -- ============================================================
 -- COMPACT TEST UI
 -- ============================================================
-local old = GuiParent:FindFirstChild("HYAZ_RBXL_IMPORTER_V11")
+local old = GuiParent:FindFirstChild("HYAZ_RBXL_IMPORTER_V12")
 if old then old:Destroy() end
 
 local gui = Instance.new("ScreenGui")
-gui.Name = "HYAZ_RBXL_IMPORTER_V11"
+gui.Name = "HYAZ_RBXL_IMPORTER_V13"
 gui.ResetOnSpawn = false
 gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 gui.Parent = GuiParent
@@ -760,7 +938,7 @@ local version = Instance.new("TextLabel")
 version.Size = UDim2.new(1, -125, 0, 18)
 version.Position = UDim2.fromOffset(15, 39)
 version.BackgroundTransparency = 1
-version.Text = "V1.1 • RBXL BINARY ENGINE • DELTA WORKSPACE"
+version.Text = "V1.3 BETA • RBXL SOURCE ENGINE • DELTA WORKSPACE"
 version.TextColor3 = Color3.fromRGB(145, 150, 165)
 version.Font = Enum.Font.Gotham
 version.TextSize = 9
@@ -895,10 +1073,10 @@ scanFiles()
 
 -- Expose engine for the main HYAZ UI later without duplicating the parser.
 _G.HYAZ_RBXL_IMPORTER = {
-    Version = "V1.1",
+    Version = "V1.3 BETA",
     Parse = parseRBXLBinary,
     Import = importRBXL,
     Scan = collectRBXL,
 }
 
-print("[HYAZ RBXL IMPORTER V1.1] READY")
+print("[HYAZ RBXL IMPORTER V1.3 BETA] READY")
