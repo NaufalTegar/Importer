@@ -1,0 +1,1855 @@
+--[[
+                                                                            
+       Hyaz IMPORTER v62.0 - Dynamic Animated Gradient & Vector Icons     
+       Features: Real-time UI Animations, Verified Asset Mapping            
+       Supports: RBXM, RBXL, RBXLX, RBXMX                                   
+                                                                            
+]]
+
+if not game:IsLoaded() then game.Loaded:Wait() end
+
+--                                                                        
+-- WHITELIST GATE   Hyaz PAID SCRIPT
+--                                                                        
+local _WHITELIST = {
+    -- Masukkan UserId yang boleh akses di sini
+    11511269985,
+}
+
+local _userId = game:GetService("Players").LocalPlayer.UserId
+local _allowed = false
+for _, id in ipairs(_WHITELIST) do
+    if id == _userId then _allowed = true; break end
+end
+
+if not _allowed then
+    warn(string.char(104,97,118,101,32,121,111,117,32,116,114,105,101,100,32,111,112,101,110,105)..string.char(110,103,32,116,104,105,115,32,115,99,114,105,112,116,32,105,116,39,115,32)..string.char(110,111,116,32,101,97,115,121,32,109,121,32,102,114,105,101,110,100,32,240)..string.char(159,152,136,240,159,152,136,240,159,152,136,240,159,152,136))
+    warn(string.char(75,65,76,79,32,75,65,76,73,65,78,32,77,65,85,32,66,69,76,73)..string.char(32,73,77,80,79,82,84,32,82,66,88,77,32,78,89,65,32,76,65,78)..string.char(71,83,85,78,71,32,65,74,65,32,72,85,66,85,78,71,73,32,76,65)..string.char(78,71,90,32,68,73,32,78,79,77,79,82,32,73,78,73,44,32,48,56)..string.char(56,49,48,50,50,57,52,55,50,51,50,32,75,73,78,71,32,76,65,78)..string.char(71,90,32,240,159,145,145))
+    return
+end
+
+
+--                                                                        
+-- SERVICES & UTILITIES
+--                                                                        
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local HttpService = game:GetService("HttpService")
+local UserInputService = game:GetService("UserInputService")
+local InsertService = game:GetService("InsertService")
+local CoreGui = game:GetService("CoreGui")
+local TweenService = game:GetService("TweenService")
+local RunService = game:GetService("RunService")
+
+local LocalPlayer = Players.LocalPlayer
+local CoreDest = pcall(function() return CoreGui.Name end) and CoreGui or LocalPlayer:WaitForChild("PlayerGui")
+
+_G.Hyaz_RAW_SOURCES = _G.Hyaz_RAW_SOURCES or {}
+
+-- Pemetaan Icon Vektor Lucide (High Resolution & Clean Vector Mask)
+local ICONS = {
+    PACKAGE        = "rbxassetid://10709791437",
+    SEARCH         = "rbxassetid://10709796118",
+    CLOSE          = "rbxassetid://10709790644",
+    MINIMIZE       = "rbxassetid://10709790387",
+    CHEVRON_RIGHT  = "rbxassetid://10709782525",
+    CHEVRON_LEFT   = "rbxassetid://10709782230",
+    BELL           = "rbxassetid://10709791160",
+    GAMEPAD        = "rbxassetid://10709790082",
+    FILE           = "rbxassetid://10709790948",
+    DOWNLOAD       = "rbxassetid://10709791283",
+    CHECK          = "rbxassetid://10709790240",
+    ALERT          = "rbxassetid://10709790520",
+    FOLDER         = "rbxassetid://10709790172",
+    REFRESH        = "rbxassetid://10709793382"
+}
+
+--                                                                        
+-- HTTP REQUEST UTILITY
+--                                                                        
+local function httpRequest(url, method, headers, data)
+    method = method or "GET"
+    headers = headers or {}
+    headers["User-Agent"] = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+
+    local requestFuncs = {
+        function() if syn and syn.request then local r = syn.request({Url = url, Method = method, Headers = headers, Body = data}); return r.Body, r.StatusCode end end,
+        function() if request then local r = request({Url = url, Method = method, Headers = headers, Body = data}); return r.Body, r.StatusCode end end,
+        function() if http_request then local r = http_request({Url = url, Method = method, Headers = headers, Body = data}); return r.Body, r.StatusCode end end,
+        function() if fluxus and fluxus.request then local r = fluxus.request({Url = url, Method = method, Headers = headers, Body = data}); return r.Body, r.StatusCode end end,
+        function() return game:HttpGet(url, true), 200 end
+    }
+    for _, fn in ipairs(requestFuncs) do
+        local ok, body, status = pcall(fn)
+        if ok and body and type(body) == "string" and #body > 0 then
+            return body, status or 200
+        end
+    end
+    return nil, nil
+end
+
+--                                                                        
+-- RBXM FILE PARSER (LZ4 + Binary Format)
+--                                                                        
+local function Buffer(str, allowOverflows)
+    local Stream = { Offset = 0, Source = str, Length = string.len(str), AllowOverflows = (allowOverflows == nil and true) or allowOverflows }
+    function Stream:read(len, shift)
+        len = len or 1; shift = (shift == nil and true) or shift
+        local dat = string.sub(self.Source, self.Offset + 1, self.Offset + len)
+        if shift then self:seek(len) end
+        return dat
+    end
+    function Stream:seek(len) self.Offset = math.clamp(self.Offset + len, 0, self.Length) end
+    function Stream:readNumber(fmt, shift)
+        fmt = fmt or "I1"; local chunk = self:read(string.packsize(fmt), shift); return string.unpack(fmt, chunk)
+    end
+    function Stream:append(s) self.Source = self.Source .. s; self.Length = #self.Source end
+    function Stream:toEnd() self.Offset = self.Length end
+    return Stream
+end
+
+local function transformInt(x) return (x % 2 == 0) and (x / 2) or (-(x + 1) / 2) end
+local function rbxF32(x) x = bit32.rrotate(x, 1); return string.unpack(">f", string.pack(">I4", x)) end
+
+local basicTypes = {}
+function basicTypes.String(buffer) return buffer:read(buffer:readNumber("<I4")) end
+function basicTypes.Int32(buffer) return transformInt(buffer:readNumber(">I4")) end
+function basicTypes.Int64(buffer) return transformInt(buffer:readNumber(">I8")) end
+function basicTypes.Float32(buffer) return rbxF32(buffer:readNumber(">I4")) end
+function basicTypes.Float64(buffer) return buffer:readNumber("<d") end
+
+function basicTypes.InterleaveArrayWithSize(buffer, count, sizeof)
+    if count < 0 then return Buffer("", false) end
+    local stream = buffer:read(count * sizeof); local out = table.create(count)
+    for i = 1, count do
+        local chunk = table.create(sizeof)
+        for s = 0, sizeof - 1 do
+            local bitPos = i + (count * s); chunk[s+1] = string.sub(stream, bitPos, bitPos)
+        end
+        out[i] = table.concat(chunk)
+    end
+    return Buffer(table.concat(out), false)
+end
+
+function basicTypes.unsignedIntArray(buffer, count)
+    if count < 1 then return {} end
+    local o = table.create(count); local strings = basicTypes.InterleaveArrayWithSize(buffer, count, 4)
+    for i = 1, count do o[i] = strings:readNumber("<I4") end
+    return o
+end
+
+function basicTypes.Int32Array(buffer, count)
+    if count < 1 then return {} end
+    local o = table.create(count); local strings = basicTypes.InterleaveArrayWithSize(buffer, count, 4)
+    for i = 1, count do o[i] = basicTypes.Int32(strings) end
+    return o
+end
+
+function basicTypes.Int64Array(buffer, count)
+    if count < 1 then return {} end
+    local o = table.create(count); local strings = basicTypes.InterleaveArrayWithSize(buffer, count, 8)
+    for i = 1, count do o[i] = basicTypes.Int64(strings) end
+    return o
+end
+
+function basicTypes.RbxF32Array(buffer, count)
+    if count < 1 then return {} end
+    local o = table.create(count); local strings = basicTypes.InterleaveArrayWithSize(buffer, count, 4)
+    for i = 1, count do o[i] = basicTypes.Float32(strings) end
+    return o
+end
+
+function basicTypes.RefArray(buffer, count)
+    if count < 1 then return {} end
+    local o = table.create(count); local refs = basicTypes.Int32Array(buffer, count); local last = 0
+    for i = 1, count do local ref = last + refs[i]; o[i] = ref; last = ref end
+    return o
+end
+
+local function lz4(lz4data)
+    local inputStream = Buffer(lz4data)
+    local compressedLen = string.unpack("<I4", inputStream:read(4))
+    local decompressedLen = string.unpack("<I4", inputStream:read(4))
+    local reserved = string.unpack("<I4", inputStream:read(4))
+    if reserved ~= 0 then error("not lz4") end
+    if compressedLen == 0 then return inputStream:read(decompressedLen) end
+    local outputStream = Buffer("")
+    repeat
+        local token = string.byte(inputStream:read())
+        local litLen = bit32.rshift(token, 4)
+        local matLen = bit32.band(token, 15) + 4
+        if litLen >= 15 then
+            repeat local nextByte = string.byte(inputStream:read()); litLen = litLen + nextByte until nextByte ~= 0xFF
+        end
+        local literal = inputStream:read(litLen); outputStream:append(literal); outputStream:toEnd()
+        if outputStream.Length < decompressedLen then
+            local offset = string.unpack("<I2", inputStream:read(2))
+            if matLen >= 19 then
+                repeat local nextByte = string.byte(inputStream:read()); matLen = matLen + nextByte until nextByte ~= 0xFF
+            end
+            outputStream:seek(-offset)
+            local pos = outputStream.Offset; local match = outputStream:read(matLen)
+            local unreadBytes = outputStream.LastUnreadBytes or 0
+            local extra
+            if unreadBytes then
+                repeat
+                    outputStream.Offset = pos; extra = outputStream:read(unreadBytes)
+                    unreadBytes = outputStream.LastUnreadBytes or 0; match = match .. extra
+                until unreadBytes <= 0
+            end
+            outputStream:append(match); outputStream:toEnd()
+        end
+    until outputStream.Length >= decompressedLen
+    return outputStream.Source
+end
+
+local function b64encode(str)
+    local chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+    local out = {}
+    for i = 1, #str, 3 do
+        local b0, b1, b2 = string.byte(str, i, i+2)
+        local b = bit32.lshift(b0, 16) + bit32.lshift(b1 or 0, 8) + (b2 or 0)
+        table.insert(out, chars:sub(bit32.extract(b, 18, 6)+1, bit32.extract(b, 18, 6)+1))
+        table.insert(out, chars:sub(bit32.extract(b, 12, 6)+1, bit32.extract(b, 12, 6)+1))
+        table.insert(out, b1 and chars:sub(bit32.extract(b, 6, 6)+1, bit32.extract(b, 6, 6)+1) or "=")
+        table.insert(out, b2 and chars:sub(bit32.band(b, 63)+1, bit32.band(b, 63)+1) or "=")
+    end
+    return table.concat(out)
+end
+
+local function zstd(stream)
+    local zbase64 = b64encode(stream)
+    local json = '{"m":null,"t":"buffer","zbase64":"' .. zbase64 .. '"}'
+    local x = HttpService:JSONDecode(json)
+    return buffer.tostring(x)
+end
+
+local function parseRBXMForSources(data)
+    local sources = {}
+    local rbxmBuffer = Buffer(data, false)
+    if rbxmBuffer:read(8) ~= "<roblox!" or rbxmBuffer:read(6) ~= string.char(137,255,13,10,26,10) then return sources, "Invalid header" end
+    if rbxmBuffer:read(2) ~= (string.char(0)..string.char(0)) then return sources, "Invalid version" end
+    local classCount = rbxmBuffer:readNumber("<i4")
+    local instCount = rbxmBuffer:readNumber("<i4")
+    local classRefs, virtualInstances, strings, chunkInfo = {}, {}, {}, {}
+    local _EC = "END"..string.char(0)
+    local valid = {[_EC]=true, ["INST"]=true, ["META"]=true, ["PRNT"]=true, ["PROP"]=true, ["SIGN"]=true, ["SSTR"]=true}
+    for k in pairs(valid) do chunkInfo[k] = {} end
+    if rbxmBuffer:read(8) ~= string.char(0,0,0,0,0,0,0,0) then return sources, "Invalid header" end
+
+    local index, last_chunk = 0, nil
+    repeat
+        index = index + 1
+        local chunk = {InternalID = index, Header = rbxmBuffer:read(4)}
+        if not valid[chunk.Header] then return sources, "Invalid chunk" end
+        local lz4Header = rbxmBuffer:read(16, false)
+        local compressed = string.unpack("<I4", string.sub(lz4Header, 1, 4))
+        local decompressed = string.unpack("<I4", string.sub(lz4Header, 5, 8))
+        local reserved = string.sub(lz4Header, 9, 12)
+        local zstd_check = string.sub(lz4Header, 13, 16)
+        local dataChunk
+        if compressed == 0 then
+            dataChunk = rbxmBuffer:read(decompressed + 12)
+        else
+            if zstd_check == string.char(40,181,47,253) then rbxmBuffer:seek(12); dataChunk = zstd(rbxmBuffer:read(compressed))
+            else dataChunk = lz4(rbxmBuffer:read(compressed + 12)) end
+        end
+        chunk.Data = Buffer(dataChunk, false); table.insert(chunkInfo[chunk.Header], chunk); last_chunk = chunk
+    until last_chunk and last_chunk.Header == _EC
+
+    for _, chunk in ipairs(chunkInfo["SSTR"] or {}) do
+        local buffer = chunk.Data
+        if buffer:readNumber("<I4") == 0 then
+            for i = 1, buffer:readNumber("<I4") do buffer:read(16); strings[i] = basicTypes.String(buffer) end
+        end
+    end
+
+    for _, chunk in ipairs(chunkInfo["INST"] or {}) do
+        local buffer = chunk.Data
+        local classID = buffer:readNumber("<I4"); local className = basicTypes.String(buffer)
+        if buffer:read() == "\1" then return sources, "Contains services" end
+        local count = buffer:readNumber("<I4"); local refs = basicTypes.RefArray(buffer, count)
+        classRefs[classID] = { Name = className, Sizeof = count, Refs = refs }
+        for _, ref in ipairs(refs) do virtualInstances[ref] = { ClassId = classID, ClassName = className, Ref = ref, Properties = {}, Children = {} } end
+    end
+
+    for _, chunk in ipairs(chunkInfo["PROP"] or {}) do
+        local buffer = chunk.Data
+        local classID = buffer:readNumber("<I4"); local classref = classRefs[classID]
+        if not classref then return sources, "Missing classref" end
+        local refs = classref.Refs; local sizeof = classref.Sizeof; local name = basicTypes.String(buffer)
+        if string.byte(buffer:read(1, false)) == 0x1E then buffer:seek(1) end
+        local typeID = string.byte(buffer:read()); local props = {}
+        if typeID == 0x01 or typeID == 0x1D then
+            for i = 1, sizeof do props[i] = basicTypes.String(buffer) end
+        elseif typeID == 0x02 then
+            for i = 1, sizeof do props[i] = buffer:read() ~= string.char(0) end
+        elseif typeID == 0x03 then props = basicTypes.Int32Array(buffer, sizeof)
+        elseif typeID == 0x04 then props = basicTypes.RbxF32Array(buffer, sizeof)
+        elseif typeID == 0x05 then
+            for i = 1, sizeof do props[i] = basicTypes.Float64(buffer) end
+        else
+            for i = 1, sizeof do
+                if typeID == 0x13 then props = basicTypes.RefArray(buffer, sizeof); break else buffer:read(4) end
+            end
+        end
+        if name == "Source" or name == "ContentText" then
+            for i, v in ipairs(refs) do
+                if virtualInstances[v] and props[i] then virtualInstances[v].Properties[name] = props[i] end
+            end
+        end
+    end
+
+    local function buildSourceMap(node, path)
+        local src = node.Properties["Source"] or node.Properties["ContentText"]
+        if src and type(src) == "string" and #src > 0 then sources[path] = src end
+        for _, child in ipairs(node.Children or {}) do buildSourceMap(child, path .. "." .. child.ClassName .. ":" .. (child.Properties["Name"] or "unnamed")) end
+    end
+
+    for _, chunk in ipairs(chunkInfo["PRNT"] or {}) do
+        local buffer = chunk.Data
+        if buffer:read() ~= string.char(0) then return sources, "Invalid PRNT" end
+        local count = buffer:readNumber("<I4")
+        local child_refs = basicTypes.RefArray(buffer, count); local parent_refs = basicTypes.RefArray(buffer, count)
+        for i = 1, count do
+            local child = virtualInstances[child_refs[i]]; local parent = virtualInstances[parent_refs[i]]
+            if child and parent then table.insert(parent.Children, child) end
+        end
+    end
+
+    local roots = {}
+    for _, inst in pairs(virtualInstances) do
+        local hasParent = false
+        for _, other in pairs(virtualInstances) do
+            for _, child in ipairs(other.Children or {}) do if child.Ref == inst.Ref then hasParent = true; break end end
+            if hasParent then break end
+        end
+        if not hasParent then table.insert(roots, inst) end
+    end
+    for _, root in ipairs(roots) do buildSourceMap(root, root.ClassName .. ":" .. (root.Properties["Name"] or "root")) end
+
+    return sources, nil
+end
+
+--                                                                        
+-- STUDIO LITE INTEGRATION
+--                                                                        
+local slFolder = ReplicatedStorage:FindFirstChild("StudioLiteFolder")
+local serverFuncs = slFolder and slFolder:FindFirstChild("ServerFunctions")
+
+local function triggerServerLoad(idStr)
+    if not serverFuncs or not idStr or idStr == "" then return end
+    local id = tostring(idStr):match("%d+")
+    if id then pcall(function() serverFuncs:InvokeServer("LoadMeshToRuntimeMeshes", tonumber(id)) end) end
+end
+
+local SL_CACHE = {}
+local function injectStudioLiteUI(scr, sourceMap)
+    if not scr:IsA("LuaSourceContainer") then return end
+    local path = scr.ClassName .. ":" .. scr.Name
+    local realSource = sourceMap and sourceMap[path]
+    if not realSource then pcall(function() realSource = scr.Source end) end
+    if realSource and #realSource > 0 then local _nullpat = string.char(0); realSource = realSource:gsub(_nullpat .. "*$", "") else realSource = "-- [Hyaz] Source tidak ditemukan." end
+
+    _G.Hyaz_RAW_SOURCES[scr] = realSource
+
+    local UI_TEXT = realSource
+    if #UI_TEXT > 150000 then UI_TEXT = "-- [Hyaz Warning] Source terlalu panjang.\n\n" .. string.sub(UI_TEXT, 1, 150000) .. "\n\n... [TERPOTONG]" end
+
+    local existingTB = scr:FindFirstChild("SL_CodeTextBox")
+    if existingTB then
+        existingTB.Text = UI_TEXT
+        if scr.ClassName == "ModuleScript" then
+            local ro = scr:FindFirstChild("SL_1ReadOnly")
+            if ro then ro.ContentText = UI_TEXT; ro.Text = UI_TEXT end
+        end
+        return
+    end
+
+    if not serverFuncs then return end
+    local map = { Script = "InsertScriptScript", LocalScript = "InsertLocalScriptLocalScript", ModuleScript = "InsertModuleScriptModuleScript" }
+    local assetName = map[scr.ClassName]
+    if not assetName then return end
+
+    if not SL_CACHE[assetName] then
+        pcall(function()
+            serverFuncs:InvokeServer("LoadAssetToPlayerGui", assetName)
+            local guiF = LocalPlayer:WaitForChild("PlayerGui"):WaitForChild(assetName, 3)
+            if guiF then
+                SL_CACHE[assetName] = {}
+                for _, c in ipairs(guiF:GetChildren()) do table.insert(SL_CACHE[assetName], c:Clone()) end
+                serverFuncs:InvokeServer("ClearAssetFromPlayerGui", assetName)
+            end
+        end)
+    end
+    if not SL_CACHE[assetName] then return end
+
+    pcall(function()
+        for _, c in ipairs(SL_CACHE[assetName]) do c:Clone().Parent = scr end
+        local tb = scr:FindFirstChild("SL_CodeTextBox")
+        if tb then
+            tb.Text = UI_TEXT
+            if scr.ClassName == "ModuleScript" then
+                local ro = scr:FindFirstChild("SL_1ReadOnly")
+                if ro then ro.ContentText = UI_TEXT; ro.Text = UI_TEXT end
+            end
+        end
+    end)
+end
+
+local function injectAllScripts(root, sourceMap)
+    if not root then return 0 end
+    local list = {}
+    if root:IsA("LuaSourceContainer") then table.insert(list, root) end
+    for _, d in ipairs(root:GetDescendants()) do if d:IsA("LuaSourceContainer") then table.insert(list, d) end end
+    local count = 0
+    for _, s in ipairs(list) do pcall(injectStudioLiteUI, s, sourceMap); count = count + 1; task.wait(0.02) end
+    return count
+end
+
+local function ApplyStudioLiteProperties(obj)
+    if not obj then return end
+    pcall(function()
+        if obj:IsA("BasePart") then
+            local originalAnchor = obj.Anchored
+            local originalCollide = obj.CanCollide
+            obj.Anchored = true
+            if obj:GetAttribute("SL_Anchored") == nil then obj:SetAttribute("SL_Anchored", originalAnchor) end
+            if obj:GetAttribute("SL_CanCollide") == nil then obj:SetAttribute("SL_CanCollide", originalCollide) end
+        end
+    end)
+    for _, child in ipairs(obj:GetChildren()) do ApplyStudioLiteProperties(child) end
+end
+
+local function LoadAssetsToSLServer(obj)
+    local function scan(node)
+        pcall(function()
+            if node:IsA("MeshPart") then triggerServerLoad(node.MeshId); triggerServerLoad(node.TextureID)
+            elseif node:IsA("Decal") or node:IsA("Texture") then triggerServerLoad(node.Texture)
+            elseif node:IsA("SpecialMesh") then triggerServerLoad(node.MeshId); triggerServerLoad(node.TextureId)
+            elseif node:IsA("Clothing") or node:IsA("ShirtGraphic") then triggerServerLoad(node.ClassName == "ShirtGraphic" and node.Graphic or node[node.ClassName.."Template"])
+            elseif node:IsA("UnionOperation") or node:IsA("PartOperation") then triggerServerLoad(node.AssetId) end
+        end)
+        for _, child in ipairs(node:GetChildren()) do scan(child) end
+    end
+    scan(obj)
+end
+
+local SVC_MAP = { 
+    Workspace = workspace, 
+    ReplicatedStorage = ReplicatedStorage, 
+    ReplicatedFirst = game:GetService("ReplicatedFirst"), 
+    StarterGui = game:GetService("StarterGui"), 
+    StarterPack = game:GetService("StarterPack"), 
+    StarterPlayer = game:GetService("StarterPlayer"), 
+    Lighting = game:GetService("Lighting"), 
+    SoundService = game:GetService("SoundService"), 
+    ServerScriptService = _G.sss or ReplicatedStorage, 
+    ServerStorage = _G.ss or ReplicatedStorage, 
+    Teams = ReplicatedStorage, 
+    Chat = ReplicatedStorage 
+}
+
+local function insertObjects(objects, isRbxl, sourceMap)
+    local count = 0
+    for _, obj in ipairs(objects) do
+        pcall(function()
+            local target = (isRbxl and (SVC_MAP[obj.ClassName] or SVC_MAP[obj.Name])) or workspace
+            if target == workspace and obj:IsA("Service") then target = ReplicatedStorage end
+
+            if isRbxl and target ~= workspace then
+                for _, ch in ipairs(obj:GetChildren()) do
+                    pcall(function() 
+                        ch.Parent = target; 
+                        injectAllScripts(ch, sourceMap); 
+                        ApplyStudioLiteProperties(ch); 
+                        LoadAssetsToSLServer(ch); 
+                        count = count + 1 
+                    end)
+                    task.wait(0.01)
+                end
+            else
+                obj.Parent = target; 
+                injectAllScripts(obj, sourceMap); 
+                ApplyStudioLiteProperties(obj); 
+                LoadAssetsToSLServer(obj); 
+                count = count + 1
+            end
+        end)
+    end
+    return count
+end
+
+local function safeReadFile(p) if not readfile then return nil end; local ok, d = pcall(readfile, p); return ok and d or nil end
+
+local function loadFile(fileInfo)
+    local isRbxl = fileInfo.ftype == "RBXL"
+    local data = safeReadFile(fileInfo.path)
+    if not data or #data == 0 then return false, "readfile gagal" end
+
+    local sourceMap = {}
+    if not isRbxl then
+        local ok, sources, err = pcall(parseRBXMForSources, data)
+        if ok and sources then sourceMap = sources end
+    end
+
+    if getcustomasset then
+        local ok1, aid = pcall(getcustomasset, fileInfo.path)
+        if ok1 and aid then
+            local ok2, objs = pcall(function() return game:GetObjects(aid) end)
+            if ok2 and objs and #objs > 0 then return true, insertObjects(objs, isRbxl, sourceMap) .. " object(s) loaded" end
+        end
+    end
+
+    local ok3, o3 = pcall(function() return game:GetObjects("rbxasset://" .. fileInfo.path) end)
+    if ok3 and o3 and #o3 > 0 then return true, insertObjects(o3, isRbxl, sourceMap) .. " object(s) loaded" end
+
+    return false, "Semua metode load gagal"
+end
+
+--                                                                        
+-- FILE SCANNER
+--                                                                        
+local function safeListFiles(p) if not listfiles then return nil end; local ok, f = pcall(listfiles, p); return ok and f or nil end
+local function getFileName(p) return p:match("([^/]+)$") or p end
+local function getFileType(n) 
+    n = n:lower(); 
+    if n:match("%.rbxl") or n:match("%.rbxlx") then return "RBXL" 
+    elseif n:match("%.rbxm") or n:match("%.rbxmx") then return "RBXM" end; 
+    return nil 
+end
+local function looksFolder(p) return not getFileName(p):match("%.[%a%d]+") end
+
+local SCAN_PATHS = { "workspace", "Delta/workspace", "delta/workspace", "Android/Delta/workspace", "/sdcard/Delta/workspace", "/sdcard/Android/Delta/workspace", "../workspace", ".", "" }
+
+local function scanDeep(folder, depth, results, seen)
+    if depth > 4 or seen[folder] then return end
+    seen[folder] = true
+    local list = safeListFiles(folder)
+    if not list then return end
+    for _, path in ipairs(list) do
+        local name = getFileName(path); local ftype = getFileType(name)
+        if ftype and not seen[path] then
+            seen[path] = true; table.insert(results, { name=name, path=path, ftype=ftype, folder=folder })
+        elseif looksFolder(path) then scanDeep(path, depth+1, results, seen) end
+    end
+end
+
+local function scanAll()
+    local results, seen = {}, {}; 
+    for _, p in ipairs(SCAN_PATHS) do 
+        if safeListFiles(p) then scanDeep(p, 0, results, seen) end 
+    end
+    return results
+end
+
+--                                                                        
+-- DESTROY OLD UI
+--                                                                        
+if CoreDest:FindFirstChild("HyazImporterUI") then CoreDest:FindFirstChild("HyazImporterUI"):Destroy() end
+if CoreDest:FindFirstChild("HyazImporterUI") then CoreDest:FindFirstChild("HyazImporterUI"):Destroy() end
+
+local UI = Instance.new("ScreenGui", CoreDest)
+UI.Name = "HyazImporterUI"; UI.ResetOnSpawn = false; UI.DisplayOrder = 100; UI.IgnoreGuiInset = true
+
+-- Persistent hacker atmosphere: the green tint remains after the loading screen closes.
+local HackerAtmosphere = Instance.new("Frame", UI)
+HackerAtmosphere.Name = "HackerAtmosphere"
+HackerAtmosphere.Size = UDim2.new(1, 0, 1, 0)
+HackerAtmosphere.Position = UDim2.new(0, 0, 0, 0)
+HackerAtmosphere.BackgroundColor3 = Color3.fromRGB(60, 0, 0)
+HackerAtmosphere.BackgroundTransparency = 0.84
+HackerAtmosphere.BorderSizePixel = 0
+HackerAtmosphere.ZIndex = 0
+HackerAtmosphere.Active = false
+
+-- Table untuk menampung UIGradient yang akan dianimasikan secara real-time
+local AnimatedGradients = {}
+
+local function registerGradientAnimation(gradient, speed, mode)
+    table.insert(AnimatedGradients, {
+        Gradient = gradient,
+        Speed = speed or 60,
+        Mode = mode or "rotate"
+    })
+end
+
+--                                                                        
+-- LOADING SCREEN (HACKER MATRIX RAIN + KING Hyaz CENTER TEXT)
+--                                                                        
+local LoadingScreen = Instance.new("Frame", UI)
+LoadingScreen.Name = "LoadingScreen"
+LoadingScreen.Size = UDim2.new(1, 0, 1, 0)
+LoadingScreen.Position = UDim2.new(0, 0, 0, 0)
+LoadingScreen.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+LoadingScreen.BorderSizePixel = 0
+LoadingScreen.ZIndex = 999
+
+-- Matrix rain canvas
+local MatrixCanvas = Instance.new("Frame", LoadingScreen)
+MatrixCanvas.Name = "MatrixCanvas"
+MatrixCanvas.Size = UDim2.new(1, 0, 1, 0)
+MatrixCanvas.BackgroundTransparency = 1
+MatrixCanvas.ZIndex = 999
+
+-- Characters used for matrix rain
+local matrixChars = {"0","1","0","1","A","B","C","D","E","F","$","#","%","@","!","&","*","X","Z","0","1"}
+
+-- Spawn multiple falling text columns
+local COLUMN_COUNT = 28
+local columns = {}
+
+for col = 1, COLUMN_COUNT do
+    local xPos = (col - 1) / COLUMN_COUNT
+    local columnFrame = Instance.new("Frame", MatrixCanvas)
+    columnFrame.Size = UDim2.new(1 / COLUMN_COUNT, 0, 1, 0)
+    columnFrame.Position = UDim2.new(xPos, 0, 0, 0)
+    columnFrame.BackgroundTransparency = 1
+    columnFrame.ZIndex = 999
+    columnFrame.ClipsDescendants = true
+
+    -- Each column has a stream of characters
+    local streamLength = math.random(6, 16)
+    local charLabels = {}
+    for row = 1, streamLength do
+        local charLabel = Instance.new("TextLabel", columnFrame)
+        charLabel.Size = UDim2.new(1, 0, 0, 18)
+        charLabel.Position = UDim2.new(0, 0, 0, (row - 1) * 18)
+        charLabel.BackgroundTransparency = 1
+        charLabel.Font = Enum.Font.Code
+        charLabel.TextSize = 14
+        charLabel.TextXAlignment = Enum.TextXAlignment.Center
+        -- Head char is bright green, tail fades
+        if row == 1 then
+            charLabel.TextColor3 = Color3.fromRGB(255, 120, 120)
+        elseif row <= 3 then
+            charLabel.TextColor3 = Color3.fromRGB(200, 40, 40)
+        elseif row <= 6 then
+            charLabel.TextColor3 = Color3.fromRGB(140, 20, 20)
+        else
+            charLabel.TextColor3 = Color3.fromRGB(90, 0, 0)
+        end
+        charLabel.Text = matrixChars[math.random(1, #matrixChars)]
+        charLabel.ZIndex = 999
+        table.insert(charLabels, charLabel)
+    end
+
+    -- Randomize start offset and speed
+    local startY = math.random(-800, -100)
+    local speed = math.random(180, 420)
+    local currentY = startY
+
+    table.insert(columns, {
+        frame = columnFrame,
+        labels = charLabels,
+        y = currentY,
+        speed = speed,
+        streamLength = streamLength,
+        charTimer = 0,
+        charInterval = math.random(3, 8) * 0.05
+    })
+end
+
+-- CENTER: KING Hyaz text   no stroke, no background, text only + decorative elements
+local CenterContainer = Instance.new("Frame", LoadingScreen)
+CenterContainer.Size = UDim2.new(0, 500, 0, 220)
+CenterContainer.Position = UDim2.new(0.5, -250, 0.5, -110)
+CenterContainer.BackgroundTransparency = 1
+CenterContainer.ZIndex = 1001
+
+-- Top decorative line
+local TopLine = Instance.new("TextLabel", CenterContainer)
+TopLine.Size = UDim2.new(1, 0, 0, 20)
+TopLine.Position = UDim2.new(0, 0, 0, 0)
+TopLine.BackgroundTransparency = 1
+TopLine.Text = string.char(226,148,128,226,148,128,32,226,151,136,32,226,148,128,226,148,128,226,148,128)..string.char(226,148,128,226,148,128,226,148,128,226,148,128,226,148,128,226,148,128,226,148)..string.char(128,226,148,128,226,148,128,226,148,128,226,148,128,226,148,128,226,148,128,226)..string.char(148,128,226,148,128,226,148,128,226,148,128,226,148,128,226,148,128,32,226,151)..string.char(136,32,226,148,128,226,148,128)
+TopLine.TextColor3 = Color3.fromRGB(255, 40, 55)
+TopLine.Font = Enum.Font.Code
+TopLine.TextSize = 13
+TopLine.ZIndex = 1001
+
+-- Hacker terminal boot marker
+local BootMarker = Instance.new("TextLabel", CenterContainer)
+BootMarker.Size = UDim2.new(1, 0, 0, 38)
+BootMarker.Position = UDim2.new(0, 0, 0, 22)
+BootMarker.BackgroundTransparency = 1
+BootMarker.Text = "[ SECURE BOOT // Hyaz NODE ]"
+BootMarker.TextColor3 = Color3.fromRGB(255, 105, 115)
+BootMarker.Font = Enum.Font.Code
+BootMarker.TextSize = 12
+BootMarker.ZIndex = 1001
+
+-- Main KING Hyaz text   GothamBold, no stroke
+local KingText = Instance.new("TextLabel", CenterContainer)
+KingText.Size = UDim2.new(1, 0, 0, 62)
+KingText.Position = UDim2.new(0, 0, 0, 62)
+KingText.BackgroundTransparency = 1
+KingText.Text = "KING Hyaz V62"
+KingText.TextColor3 = Color3.fromRGB(255, 25, 45)
+KingText.Font = Enum.Font.GothamBold
+KingText.TextSize = 54
+KingText.ZIndex = 1001
+
+-- Tagline below
+local TagLine = Instance.new("TextLabel", CenterContainer)
+TagLine.Size = UDim2.new(1, 0, 0, 22)
+TagLine.Position = UDim2.new(0, 0, 0, 126)
+TagLine.BackgroundTransparency = 1
+TagLine.Text = "[ RBXM IMPORTER SYSTEM INITIALIZED ]"
+TagLine.TextColor3 = Color3.fromRGB(220, 25, 40)
+TagLine.Font = Enum.Font.Code
+TagLine.TextSize = 13
+TagLine.ZIndex = 1001
+
+-- Progress dots / loading indicator
+local LoadDots = Instance.new("TextLabel", CenterContainer)
+LoadDots.Size = UDim2.new(1, 0, 0, 20)
+LoadDots.Position = UDim2.new(0, 0, 0, 152)
+LoadDots.BackgroundTransparency = 1
+LoadDots.Text = "loading . . ."
+LoadDots.TextColor3 = Color3.fromRGB(180, 18, 32)
+LoadDots.Font = Enum.Font.Code
+LoadDots.TextSize = 12
+LoadDots.ZIndex = 1001
+
+-- Bottom decorative line
+local BotLine = Instance.new("TextLabel", CenterContainer)
+BotLine.Size = UDim2.new(1, 0, 0, 20)
+BotLine.Position = UDim2.new(0, 0, 0, 196)
+BotLine.BackgroundTransparency = 1
+BotLine.Text = string.char(226,148,128,226,148,128,32,226,151,136,32,226,148,128,226,148,128,226,148,128)..string.char(226,148,128,226,148,128,226,148,128,226,148,128,226,148,128,226,148,128,226,148)..string.char(128,226,148,128,226,148,128,226,148,128,226,148,128,226,148,128,226,148,128,226)..string.char(148,128,226,148,128,226,148,128,226,148,128,226,148,128,226,148,128,32,226,151)..string.char(136,32,226,148,128,226,148,128)
+BotLine.TextColor3 = Color3.fromRGB(255, 40, 55)
+BotLine.Font = Enum.Font.Code
+BotLine.TextSize = 13
+BotLine.ZIndex = 1001
+
+-- Animate matrix rain + loading dots in a single loop
+local loadingActive = true
+local dotStates = {"loading .     ", "loading . .   ", "loading . . . "}
+local dotIndex = 0
+
+local matrixConnection
+matrixConnection = RunService.RenderStepped:Connect(function(dt)
+    if not loadingActive then
+        matrixConnection:Disconnect()
+        return
+    end
+
+    -- Update matrix columns
+    for _, col in ipairs(columns) do
+        col.y = col.y + col.speed * dt
+        -- Reposition frame
+        col.frame.Position = UDim2.new(col.frame.Position.X.Scale, 0, 0, col.y)
+        -- Reset when fully off bottom
+        if col.y > 700 + col.streamLength * 18 then
+            col.y = math.random(-600, -80)
+            col.speed = math.random(180, 420)
+        end
+        -- Randomize characters periodically
+        col.charTimer = col.charTimer + dt
+        if col.charTimer >= col.charInterval then
+            col.charTimer = 0
+            col.charInterval = math.random(3, 8) * 0.05
+            for _, lbl in ipairs(col.labels) do
+                lbl.Text = matrixChars[math.random(1, #matrixChars)]
+            end
+        end
+    end
+end)
+
+-- Loading dot animation + pulse on KING Hyaz text
+task.spawn(function()
+    local pulseUp = true
+    local r, g, b = 255, 25, 45
+    local tick = 0
+    while loadingActive do
+        task.wait(0.35)
+        dotIndex = (dotIndex % 3) + 1
+        LoadDots.Text = dotStates[dotIndex]
+        -- Pulse red hue on main text
+        tick = tick + 1
+        if tick % 2 == 0 then
+            KingText.TextColor3 = Color3.fromRGB(255, 25, 45)
+        else
+            KingText.TextColor3 = Color3.fromRGB(255, 70, 85)
+        end
+    end
+end)
+
+-- Auto-dismiss loading screen after 2.8 seconds
+task.spawn(function()
+    task.wait(2.8)
+    loadingActive = false
+    -- Fade out loading screen
+    for i = 1, 20 do
+        LoadingScreen.BackgroundTransparency = i / 20
+        for _, obj in ipairs(LoadingScreen:GetDescendants()) do
+            if obj:IsA("TextLabel") then
+                obj.TextTransparency = i / 20
+            end
+        end
+        task.wait(0.025)
+    end
+    LoadingScreen:Destroy()
+end)
+
+--                                                                        
+-- RenderStepped Animation Engine (60 FPS Smooth Movement)
+--                                                                        
+RunService.RenderStepped:Connect(function(deltaTime)
+    for _, anim in ipairs(AnimatedGradients) do
+        if anim.Gradient and anim.Gradient.Parent then
+            if anim.Mode == "rotate" then
+                anim.Gradient.Rotation = (anim.Gradient.Rotation + (anim.Speed * deltaTime)) % 360
+            elseif anim.Mode == "shift" then
+                local currentX = anim.Gradient.Offset.X
+                local newX = currentX + (anim.Speed * deltaTime)
+                if newX > 1 then newX = -1 end
+                anim.Gradient.Offset = Vector2.new(newX, anim.Gradient.Offset.Y)
+            end
+        end
+    end
+end)
+
+--                                                                        
+-- FLOATING TOGGLE BUTTON WITH VECTOR CHEVRON ICON
+--                                                                        
+local ToggleFrame = Instance.new("Frame", UI)
+ToggleFrame.Name = "ToggleFrame"
+ToggleFrame.Size = UDim2.new(0, 36, 0, 36)
+-- Keep the only toggle directly below the Roblox menu.
+ToggleFrame.Position = UDim2.new(0, 8, 0, 48)
+ToggleFrame.BackgroundColor3 = Color3.fromRGB(30, 7, 12)
+ToggleFrame.BackgroundTransparency = 0.08
+ToggleFrame.BorderSizePixel = 0
+ToggleFrame.Active = true
+
+local ToggleCorner = Instance.new("UICorner", ToggleFrame)
+ToggleCorner.CornerRadius = UDim.new(0, 10)
+
+local ToggleGrad = Instance.new("UIGradient", ToggleFrame)
+ToggleGrad.Color = ColorSequence.new({
+    ColorSequenceKeypoint.new(0, Color3.fromRGB(70, 10, 20)),
+    ColorSequenceKeypoint.new(0.5, Color3.fromRGB(175, 18, 35)),
+    ColorSequenceKeypoint.new(1, Color3.fromRGB(24, 6, 11))
+})
+ToggleGrad.Rotation = 45
+registerGradientAnimation(ToggleGrad, 40, "rotate")
+
+local ToggleStroke = Instance.new("UIStroke", ToggleFrame)
+ToggleStroke.Thickness = 1.2
+ToggleStroke.Color = Color3.fromRGB(255, 105, 115)
+ToggleStroke.Transparency = 0.18
+
+local ToggleIcon = Instance.new("ImageLabel", ToggleFrame)
+ToggleIcon.Size = UDim2.new(0, 20, 0, 20)
+ToggleIcon.Position = UDim2.new(0.5, -10, 0.5, -10)
+ToggleIcon.BackgroundTransparency = 1
+ToggleIcon.Image = ICONS.CHEVRON_RIGHT
+ToggleIcon.ImageColor3 = Color3.fromRGB(255, 190, 195)
+
+local ToggleBtn = Instance.new("TextButton", ToggleFrame)
+ToggleBtn.Size = UDim2.new(1, 0, 1, 0)
+ToggleBtn.BackgroundTransparency = 1
+ToggleBtn.Text = ""
+
+-- Dragging System Toggle Button
+local tDragToggle, tDragStart, tStartPos
+ToggleFrame.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        tDragToggle = true; tDragStart = input.Position; tStartPos = ToggleFrame.Position
+    end
+end)
+
+UserInputService.InputChanged:Connect(function(input)
+    if tDragToggle and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+        local delta = input.Position - tDragStart
+        ToggleFrame.Position = UDim2.new(tStartPos.X.Scale, tStartPos.X.Offset + delta.X, tStartPos.Y.Scale, tStartPos.Y.Offset + delta.Y)
+    end
+end)
+
+UserInputService.InputEnded:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        tDragToggle = false
+    end
+end)
+
+-- MAIN CONTAINER
+-- Modern compact red/black UI redesign. Core logic below remains unchanged.
+-- LoadingScreen above is intentionally kept functionally intact.
+
+local Theme = {
+    bg = Color3.fromRGB(8, 9, 14),
+    panel = Color3.fromRGB(13, 15, 22),
+    panel2 = Color3.fromRGB(17, 19, 28),
+    panel3 = Color3.fromRGB(22, 24, 34),
+    accent = Color3.fromRGB(245, 36, 52),
+    accentDark = Color3.fromRGB(125, 20, 30),
+    accentSoft = Color3.fromRGB(255, 105, 115),
+    text = Color3.fromRGB(245, 246, 250),
+    muted = Color3.fromRGB(145, 149, 162),
+    border = Color3.fromRGB(55, 31, 38),
+    success = Color3.fromRGB(245, 36, 52),
+    danger = Color3.fromRGB(255, 75, 85),
+}
+
+local function round(obj, radius)
+    local c = Instance.new("UICorner", obj)
+    c.CornerRadius = UDim.new(0, radius or 8)
+    return c
+end
+
+local function stroke(obj, color, thickness, transparency)
+    local s = Instance.new("UIStroke", obj)
+    s.Color = color or Theme.border
+    s.Thickness = thickness or 1
+    s.Transparency = transparency == nil and 0 or transparency
+    return s
+end
+
+local function padding(obj, top, right, bottom, left)
+    local p = Instance.new("UIPadding", obj)
+    p.PaddingTop = UDim.new(0, top or 0)
+    p.PaddingRight = UDim.new(0, right or 0)
+    p.PaddingBottom = UDim.new(0, bottom or 0)
+    p.PaddingLeft = UDim.new(0, left or 0)
+    return p
+end
+
+local function addHover(button, target, normal, hover)
+    button.MouseEnter:Connect(function()
+        TweenService:Create(target, TweenInfo.new(0.14, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+            BackgroundColor3 = hover
+        }):Play()
+    end)
+    button.MouseLeave:Connect(function()
+        TweenService:Create(target, TweenInfo.new(0.14, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+            BackgroundColor3 = normal
+        }):Play()
+    end)
+end
+
+local UI = UI
+
+-- Floating toggle
+local ToggleFrame = Instance.new("Frame", UI)
+ToggleFrame.Name = "ToggleFrame"
+ToggleFrame.Size = UDim2.new(0, 34, 0, 34)
+ToggleFrame.Position = UDim2.new(0, 9, 0, 45)
+ToggleFrame.BackgroundColor3 = Color3.fromRGB(25, 12, 16)
+ToggleFrame.BorderSizePixel = 0
+ToggleFrame.Active = true
+round(ToggleFrame, 10)
+stroke(ToggleFrame, Theme.accent, 1, 0.25)
+
+local ToggleGrad = Instance.new("UIGradient", ToggleFrame)
+ToggleGrad.Color = ColorSequence.new({
+    ColorSequenceKeypoint.new(0, Color3.fromRGB(65, 13, 22)),
+    ColorSequenceKeypoint.new(0.5, Color3.fromRGB(31, 13, 18)),
+    ColorSequenceKeypoint.new(1, Color3.fromRGB(18, 9, 13))
+})
+ToggleGrad.Rotation = 35
+registerGradientAnimation(ToggleGrad, 12, "rotate")
+
+local ToggleIcon = Instance.new("ImageLabel", ToggleFrame)
+ToggleIcon.Size = UDim2.new(0, 16, 0, 16)
+ToggleIcon.Position = UDim2.new(0.5, -8, 0.5, -8)
+ToggleIcon.BackgroundTransparency = 1
+ToggleIcon.Image = ICONS.CHEVRON_RIGHT
+ToggleIcon.ImageColor3 = Theme.accentSoft
+
+local ToggleBtn = Instance.new("TextButton", ToggleFrame)
+ToggleBtn.Size = UDim2.new(1, 0, 1, 0)
+ToggleBtn.BackgroundTransparency = 1
+ToggleBtn.Text = ""
+
+do
+    local tDragToggle, tDragStart, tStartPos
+    ToggleFrame.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            tDragToggle = true
+            tDragStart = input.Position
+            tStartPos = ToggleFrame.Position
+        end
+    end)
+    UserInputService.InputChanged:Connect(function(input)
+        if tDragToggle and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+            local delta = input.Position - tDragStart
+            ToggleFrame.Position = UDim2.new(tStartPos.X.Scale, tStartPos.X.Offset + delta.X, tStartPos.Y.Scale, tStartPos.Y.Offset + delta.Y)
+        end
+    end)
+    UserInputService.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            tDragToggle = false
+        end
+    end)
+end
+
+-- MAIN WINDOW
+local Main = Instance.new("Frame", UI)
+Main.Name = "MainFrame"
+Main.Size = UDim2.new(0, 350, 0, 390)
+Main.Position = UDim2.new(0.5, -175, 0.5, -195)
+Main.BackgroundColor3 = Theme.bg
+Main.BorderSizePixel = 0
+Main.ClipsDescendants = true
+Main.Visible = true
+round(Main, 14)
+stroke(Main, Theme.accentDark, 1, 0.08)
+
+local MainGlow = Instance.new("UIGradient", Main)
+MainGlow.Color = ColorSequence.new({
+    ColorSequenceKeypoint.new(0, Color3.fromRGB(20, 13, 19)),
+    ColorSequenceKeypoint.new(0.55, Color3.fromRGB(9, 10, 15)),
+    ColorSequenceKeypoint.new(1, Color3.fromRGB(13, 9, 13))
+})
+MainGlow.Rotation = 135
+
+-- HEADER
+local TitleBar = Instance.new("Frame", Main)
+TitleBar.Size = UDim2.new(1, 0, 0, 52)
+TitleBar.BackgroundColor3 = Theme.panel2
+TitleBar.BorderSizePixel = 0
+TitleBar.ClipsDescendants = true
+
+local HeaderLine = Instance.new("Frame", TitleBar)
+HeaderLine.Size = UDim2.new(1, 0, 0, 1)
+HeaderLine.Position = UDim2.new(0, 0, 1, -1)
+HeaderLine.BackgroundColor3 = Theme.border
+HeaderLine.BorderSizePixel = 0
+
+local TitleIconWrap = Instance.new("Frame", TitleBar)
+TitleIconWrap.Size = UDim2.new(0, 31, 0, 31)
+TitleIconWrap.Position = UDim2.new(0, 10, 0.5, -15.5)
+TitleIconWrap.BackgroundColor3 = Color3.fromRGB(45, 12, 20)
+TitleIconWrap.BorderSizePixel = 0
+round(TitleIconWrap, 9)
+stroke(TitleIconWrap, Theme.accent, 1, 0.35)
+
+local TitleIcon = Instance.new("ImageLabel", TitleIconWrap)
+TitleIcon.Size = UDim2.new(0, 17, 0, 17)
+TitleIcon.Position = UDim2.new(0.5, -8.5, 0.5, -8.5)
+TitleIcon.BackgroundTransparency = 1
+TitleIcon.Image = ICONS.PACKAGE
+TitleIcon.ImageColor3 = Theme.accent
+
+local TitleText = Instance.new("TextLabel", TitleBar)
+TitleText.Size = UDim2.new(0, 150, 0, 18)
+TitleText.Position = UDim2.new(0, 49, 0, 7)
+TitleText.BackgroundTransparency = 1
+TitleText.Text = "HYAZ IMPORTER"
+TitleText.TextColor3 = Theme.text
+TitleText.Font = Enum.Font.GothamBold
+TitleText.TextSize = 13
+TitleText.TextXAlignment = Enum.TextXAlignment.Left
+
+local VersionBadge = Instance.new("Frame", TitleBar)
+VersionBadge.Size = UDim2.new(0, 40, 0, 18)
+VersionBadge.Position = UDim2.new(0, 158, 0, 8)
+VersionBadge.BackgroundColor3 = Color3.fromRGB(45, 12, 19)
+VersionBadge.BorderSizePixel = 0
+round(VersionBadge, 8)
+stroke(VersionBadge, Theme.accentDark, 1, 0.25)
+
+local VersionText = Instance.new("TextLabel", VersionBadge)
+VersionText.Size = UDim2.new(1, 0, 1, 0)
+VersionText.BackgroundTransparency = 1
+VersionText.Text = "v62.0"
+VersionText.TextColor3 = Theme.accentSoft
+VersionText.Font = Enum.Font.GothamBold
+VersionText.TextSize = 8
+
+local Subtitle = Instance.new("TextLabel", TitleBar)
+Subtitle.Size = UDim2.new(0, 190, 0, 14)
+Subtitle.Position = UDim2.new(0, 49, 0, 28)
+Subtitle.BackgroundTransparency = 1
+Subtitle.Text = "RBXM / RBXL  •  IMPORTER READY"
+Subtitle.TextColor3 = Theme.muted
+Subtitle.Font = Enum.Font.GothamMedium
+Subtitle.TextSize = 7
+Subtitle.TextXAlignment = Enum.TextXAlignment.Left
+
+local StatusWrap = Instance.new("Frame", TitleBar)
+StatusWrap.Size = UDim2.new(0, 67, 0, 28)
+StatusWrap.Position = UDim2.new(1, -142, 0.5, -14)
+StatusWrap.BackgroundColor3 = Color3.fromRGB(24, 14, 18)
+StatusWrap.BorderSizePixel = 0
+round(StatusWrap, 8)
+
+local StatusDot = Instance.new("Frame", StatusWrap)
+StatusDot.Size = UDim2.new(0, 6, 0, 6)
+StatusDot.Position = UDim2.new(0, 8, 0.5, -3)
+StatusDot.BackgroundColor3 = Theme.accent
+StatusDot.BorderSizePixel = 0
+round(StatusDot, 3)
+
+local StatusText = Instance.new("TextLabel", StatusWrap)
+StatusText.Size = UDim2.new(1, -20, 1, 0)
+StatusText.Position = UDim2.new(0, 18, 0, 0)
+StatusText.BackgroundTransparency = 1
+StatusText.Text = "READY"
+StatusText.TextColor3 = Theme.accent
+StatusText.Font = Enum.Font.GothamBold
+StatusText.TextSize = 8
+StatusText.TextXAlignment = Enum.TextXAlignment.Left
+
+local CloseBtn = Instance.new("Frame", TitleBar)
+CloseBtn.Size = UDim2.new(0, 28, 0, 28)
+CloseBtn.Position = UDim2.new(1, -38, 0.5, -14)
+CloseBtn.BackgroundColor3 = Color3.fromRGB(42, 12, 18)
+CloseBtn.BorderSizePixel = 0
+round(CloseBtn, 8)
+stroke(CloseBtn, Theme.accentDark, 1, 0.2)
+
+local CloseIcon = Instance.new("TextLabel", CloseBtn)
+CloseIcon.Size = UDim2.new(1, 0, 1, 0)
+CloseIcon.BackgroundTransparency = 1
+CloseIcon.Text = "×"
+CloseIcon.TextColor3 = Theme.accentSoft
+CloseIcon.Font = Enum.Font.GothamBold
+CloseIcon.TextSize = 18
+
+local CloseClick = Instance.new("TextButton", CloseBtn)
+CloseClick.Size = UDim2.new(1, 0, 1, 0)
+CloseClick.BackgroundTransparency = 1
+CloseClick.Text = ""
+
+local MinBtn = Instance.new("Frame", TitleBar)
+MinBtn.Size = UDim2.new(0, 28, 0, 28)
+MinBtn.Position = UDim2.new(1, -74, 0.5, -14)
+MinBtn.BackgroundColor3 = Theme.panel3
+MinBtn.BorderSizePixel = 0
+round(MinBtn, 8)
+stroke(MinBtn, Theme.border, 1, 0.2)
+
+local MinIcon = Instance.new("ImageLabel", MinBtn)
+MinIcon.Size = UDim2.new(0, 13, 0, 13)
+MinIcon.Position = UDim2.new(0.5, -6.5, 0.5, -6.5)
+MinIcon.BackgroundTransparency = 1
+MinIcon.Image = ICONS.MINIMIZE
+MinIcon.ImageColor3 = Theme.accentSoft
+
+local MinClick = Instance.new("TextButton", MinBtn)
+MinClick.Size = UDim2.new(1, 0, 1, 0)
+MinClick.BackgroundTransparency = 1
+MinClick.Text = ""
+
+addHover(CloseClick, CloseBtn, Color3.fromRGB(42, 12, 18), Color3.fromRGB(75, 18, 28))
+addHover(MinClick, MinBtn, Theme.panel3, Color3.fromRGB(37, 30, 37))
+
+-- DRAGGING
+ do
+    local dragToggle, dragStart, startPos
+    TitleBar.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            dragToggle = true
+            dragStart = input.Position
+            startPos = Main.Position
+        end
+    end)
+    UserInputService.InputChanged:Connect(function(input)
+        if dragToggle and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+            local delta = input.Position - dragStart
+            Main.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+        end
+    end)
+    UserInputService.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            dragToggle = false
+        end
+    end)
+end
+
+local function toggleMain()
+    Main.Visible = not Main.Visible
+    ToggleIcon.Image = Main.Visible and ICONS.CHEVRON_RIGHT or ICONS.CHEVRON_LEFT
+end
+ToggleBtn.MouseButton1Click:Connect(toggleMain)
+
+-- BODY
+local Body = Instance.new("Frame", Main)
+Body.Size = UDim2.new(1, -16, 1, -66)
+Body.Position = UDim2.new(0, 8, 0, 58)
+Body.BackgroundTransparency = 1
+
+-- LEFT SIDEBAR
+local Sidebar = Instance.new("Frame", Body)
+Sidebar.Size = UDim2.new(0, 102, 1, -8)
+Sidebar.Position = UDim2.new(0, 0, 0, 0)
+Sidebar.BackgroundColor3 = Theme.panel
+Sidebar.BorderSizePixel = 0
+round(Sidebar, 10)
+stroke(Sidebar, Theme.border, 1, 0.25)
+
+local SideTitle = Instance.new("TextLabel", Sidebar)
+SideTitle.Size = UDim2.new(1, -16, 0, 18)
+SideTitle.Position = UDim2.new(0, 8, 0, 10)
+SideTitle.BackgroundTransparency = 1
+SideTitle.Text = "CONTROL"
+SideTitle.TextColor3 = Theme.muted
+SideTitle.Font = Enum.Font.GothamBold
+SideTitle.TextSize = 7
+SideTitle.TextXAlignment = Enum.TextXAlignment.Left
+
+local ScanBtn = Instance.new("Frame", Sidebar)
+ScanBtn.Size = UDim2.new(1, -14, 0, 40)
+ScanBtn.Position = UDim2.new(0, 7, 0, 34)
+ScanBtn.BackgroundColor3 = Color3.fromRGB(100, 17, 27)
+ScanBtn.BorderSizePixel = 0
+round(ScanBtn, 8)
+stroke(ScanBtn, Theme.accent, 1, 0.3)
+
+local ScanIcon = Instance.new("ImageLabel", ScanBtn)
+ScanIcon.Size = UDim2.new(0, 14, 0, 14)
+ScanIcon.Position = UDim2.new(0, 8, 0.5, -7)
+ScanIcon.BackgroundTransparency = 1
+ScanIcon.Image = ICONS.SEARCH
+ScanIcon.ImageColor3 = Color3.fromRGB(255, 225, 228)
+
+local ScanText = Instance.new("TextLabel", ScanBtn)
+ScanText.Size = UDim2.new(1, -29, 1, 0)
+ScanText.Position = UDim2.new(0, 27, 0, 0)
+ScanText.BackgroundTransparency = 1
+ScanText.Text = "SCAN NOW"
+ScanText.TextColor3 = Theme.text
+ScanText.Font = Enum.Font.GothamBold
+ScanText.TextSize = 8
+ScanText.TextXAlignment = Enum.TextXAlignment.Left
+
+local ScanClick = Instance.new("TextButton", ScanBtn)
+ScanClick.Size = UDim2.new(1, 0, 1, 0)
+ScanClick.BackgroundTransparency = 1
+ScanClick.Text = ""
+addHover(ScanClick, ScanBtn, Color3.fromRGB(100, 17, 27), Color3.fromRGB(145, 22, 36))
+
+local ScanHint = Instance.new("TextLabel", Sidebar)
+ScanHint.Size = UDim2.new(1, -14, 0, 30)
+ScanHint.Position = UDim2.new(0, 7, 0, 78)
+ScanHint.BackgroundTransparency = 1
+ScanHint.Text = "Detect RBX files\nin Workspace"
+ScanHint.TextColor3 = Theme.muted
+ScanHint.Font = Enum.Font.Gotham
+ScanHint.TextSize = 7
+ScanHint.TextWrapped = true
+ScanHint.TextXAlignment = Enum.TextXAlignment.Center
+
+local StatPanel = Instance.new("Frame", Sidebar)
+StatPanel.Size = UDim2.new(1, -14, 0, 112)
+StatPanel.Position = UDim2.new(0, 7, 0, 113)
+StatPanel.BackgroundColor3 = Theme.panel2
+StatPanel.BorderSizePixel = 0
+round(StatPanel, 9)
+stroke(StatPanel, Theme.border, 1, 0.3)
+
+local function makeSideStat(parent, y, label, value, icon)
+    local ico = Instance.new("ImageLabel", parent)
+    ico.Size = UDim2.new(0, 13, 0, 13)
+    ico.Position = UDim2.new(0, 8, 0, y + 1)
+    ico.BackgroundTransparency = 1
+    ico.Image = icon
+    ico.ImageColor3 = Theme.accent
+
+    local lbl = Instance.new("TextLabel", parent)
+    lbl.Size = UDim2.new(1, -37, 0, 14)
+    lbl.Position = UDim2.new(0, 27, 0, y)
+    lbl.BackgroundTransparency = 1
+    lbl.Text = label
+    lbl.TextColor3 = Theme.muted
+    lbl.Font = Enum.Font.GothamMedium
+    lbl.TextSize = 7
+    lbl.TextXAlignment = Enum.TextXAlignment.Left
+
+    local val = Instance.new("TextLabel", parent)
+    val.Size = UDim2.new(0, 20, 0, 14)
+    val.Position = UDim2.new(1, -27, 0, y)
+    val.BackgroundTransparency = 1
+    val.Text = value
+    val.TextColor3 = Theme.accent
+    val.Font = Enum.Font.GothamBold
+    val.TextSize = 8
+    val.TextXAlignment = Enum.TextXAlignment.Right
+    return val
+end
+
+local FilesValue = makeSideStat(StatPanel, 10, "FILES FOUND", "0", ICONS.FOLDER)
+local Divider1 = Instance.new("Frame", StatPanel)
+Divider1.Size = UDim2.new(1, -18, 0, 1)
+Divider1.Position = UDim2.new(0, 9, 0, 37)
+Divider1.BackgroundColor3 = Theme.border
+Divider1.BorderSizePixel = 0
+local InsertedValue = makeSideStat(StatPanel, 47, "INSERTED", "0", ICONS.CHECK)
+local Divider2 = Divider1:Clone()
+Divider2.Parent = StatPanel
+Divider2.Position = UDim2.new(0, 9, 0, 74)
+local FailedValue = makeSideStat(StatPanel, 84, "FAILED", "0", ICONS.ALERT)
+
+local BrandPanel = Instance.new("Frame", Sidebar)
+BrandPanel.Size = UDim2.new(1, -14, 0, 34)
+BrandPanel.Position = UDim2.new(0, 7, 1, -42)
+BrandPanel.BackgroundColor3 = Color3.fromRGB(28, 12, 17)
+BrandPanel.BorderSizePixel = 0
+round(BrandPanel, 8)
+
+local BrandIcon = Instance.new("ImageLabel", BrandPanel)
+BrandIcon.Size = UDim2.new(0, 15, 0, 15)
+BrandIcon.Position = UDim2.new(0, 8, 0.5, -7.5)
+BrandIcon.BackgroundTransparency = 1
+BrandIcon.Image = ICONS.PACKAGE
+BrandIcon.ImageColor3 = Theme.accent
+
+local BrandText = Instance.new("TextLabel", BrandPanel)
+BrandText.Size = UDim2.new(1, -30, 1, 0)
+BrandText.Position = UDim2.new(0, 28, 0, 0)
+BrandText.BackgroundTransparency = 1
+BrandText.Text = "KING HYAZ"
+BrandText.TextColor3 = Theme.accent
+BrandText.Font = Enum.Font.GothamBold
+BrandText.TextSize = 8
+BrandText.TextXAlignment = Enum.TextXAlignment.Left
+
+-- RIGHT FILE AREA
+local Content = Instance.new("Frame", Body)
+Content.Size = UDim2.new(1, -110, 1, -8)
+Content.Position = UDim2.new(0, 110, 0, 0)
+Content.BackgroundTransparency = 1
+
+local SearchBar = Instance.new("Frame", Content)
+SearchBar.Size = UDim2.new(1, -34, 0, 34)
+SearchBar.Position = UDim2.new(0, 0, 0, 0)
+SearchBar.BackgroundColor3 = Theme.panel2
+SearchBar.BorderSizePixel = 0
+round(SearchBar, 8)
+stroke(SearchBar, Theme.border, 1, 0.15)
+
+local SearchIcon = Instance.new("ImageLabel", SearchBar)
+SearchIcon.Size = UDim2.new(0, 14, 0, 14)
+SearchIcon.Position = UDim2.new(0, 9, 0.5, -7)
+SearchIcon.BackgroundTransparency = 1
+SearchIcon.Image = ICONS.SEARCH
+SearchIcon.ImageColor3 = Theme.muted
+
+local SearchInput = Instance.new("TextBox", SearchBar)
+SearchInput.Size = UDim2.new(1, -34, 1, 0)
+SearchInput.Position = UDim2.new(0, 31, 0, 0)
+SearchInput.BackgroundTransparency = 1
+SearchInput.Text = ""
+SearchInput.PlaceholderText = "Search files..."
+SearchInput.PlaceholderColor3 = Color3.fromRGB(95, 99, 112)
+SearchInput.TextColor3 = Theme.text
+SearchInput.Font = Enum.Font.Gotham
+SearchInput.TextSize = 9
+SearchInput.TextXAlignment = Enum.TextXAlignment.Left
+SearchInput.ClearTextOnFocus = false
+
+local SearchClearBtn = Instance.new("TextButton", Content)
+SearchClearBtn.Size = UDim2.new(0, 26, 0, 26)
+SearchClearBtn.Position = UDim2.new(1, -27, 0, 4)
+SearchClearBtn.BackgroundColor3 = Theme.panel3
+SearchClearBtn.BorderSizePixel = 0
+SearchClearBtn.Text = "×"
+SearchClearBtn.TextColor3 = Theme.muted
+SearchClearBtn.Font = Enum.Font.GothamBold
+SearchClearBtn.TextSize = 13
+round(SearchClearBtn, 7)
+
+local ListHeader = Instance.new("TextLabel", Content)
+ListHeader.Size = UDim2.new(1, 0, 0, 18)
+ListHeader.Position = UDim2.new(0, 0, 0, 42)
+ListHeader.BackgroundTransparency = 1
+ListHeader.Text = "WORKSPACE FILES"
+ListHeader.TextColor3 = Theme.muted
+ListHeader.Font = Enum.Font.GothamBold
+ListHeader.TextSize = 7
+ListHeader.TextXAlignment = Enum.TextXAlignment.Left
+
+local Scroll = Instance.new("ScrollingFrame", Content)
+Scroll.Size = UDim2.new(1, 0, 1, -70)
+Scroll.Position = UDim2.new(0, 0, 0, 62)
+Scroll.BackgroundTransparency = 1
+Scroll.BorderSizePixel = 0
+Scroll.ScrollBarThickness = 3
+Scroll.ScrollBarImageColor3 = Theme.accent
+Scroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
+Scroll.CanvasSize = UDim2.new(0, 0, 0, 0)
+
+local Layout = Instance.new("UIListLayout", Scroll)
+Layout.Padding = UDim.new(0, 6)
+Layout.SortOrder = Enum.SortOrder.LayoutOrder
+
+local EmptyFrame = Instance.new("Frame", Scroll)
+EmptyFrame.Size = UDim2.new(1, 0, 0, 110)
+EmptyFrame.BackgroundTransparency = 1
+
+local EmptyIconWrap = Instance.new("Frame", EmptyFrame)
+EmptyIconWrap.Size = UDim2.new(0, 42, 0, 42)
+EmptyIconWrap.Position = UDim2.new(0.5, -21, 0, 12)
+EmptyIconWrap.BackgroundColor3 = Color3.fromRGB(30, 14, 19)
+EmptyIconWrap.BorderSizePixel = 0
+round(EmptyIconWrap, 12)
+stroke(EmptyIconWrap, Theme.border, 1, 0.2)
+
+local EmptyIcon = Instance.new("ImageLabel", EmptyIconWrap)
+EmptyIcon.Size = UDim2.new(0, 20, 0, 20)
+EmptyIcon.Position = UDim2.new(0.5, -10, 0.5, -10)
+EmptyIcon.BackgroundTransparency = 1
+EmptyIcon.Image = ICONS.FOLDER
+EmptyIcon.ImageColor3 = Theme.accentSoft
+
+local EmptyLabel = Instance.new("TextLabel", EmptyFrame)
+EmptyLabel.Size = UDim2.new(1, -16, 0, 38)
+EmptyLabel.Position = UDim2.new(0, 8, 0, 61)
+EmptyLabel.BackgroundTransparency = 1
+EmptyLabel.Text = "No files detected yet.\nPress SCAN NOW to search."
+EmptyLabel.TextColor3 = Theme.muted
+EmptyLabel.Font = Enum.Font.Gotham
+EmptyLabel.TextSize = 8
+EmptyLabel.TextWrapped = true
+EmptyLabel.TextXAlignment = Enum.TextXAlignment.Center
+
+-- FOOTER STATS
+local StatsBar = Instance.new("Frame", Main)
+StatsBar.Size = UDim2.new(1, -16, 0, 28)
+StatsBar.Position = UDim2.new(0, 8, 1, -34)
+StatsBar.BackgroundColor3 = Theme.panel2
+StatsBar.BorderSizePixel = 0
+round(StatsBar, 8)
+stroke(StatsBar, Theme.border, 1, 0.25)
+
+local FooterDot = Instance.new("Frame", StatsBar)
+FooterDot.Size = UDim2.new(0, 6, 0, 6)
+FooterDot.Position = UDim2.new(0, 9, 0.5, -3)
+FooterDot.BackgroundColor3 = Theme.accent
+FooterDot.BorderSizePixel = 0
+round(FooterDot, 3)
+
+local StatsText = Instance.new("TextLabel", StatsBar)
+StatsText.Size = UDim2.new(1, -24, 1, 0)
+StatsText.Position = UDim2.new(0, 21, 0, 0)
+StatsText.BackgroundTransparency = 1
+StatsText.Text = "Status: Ready  |  Files: 0  |  Loaded: 0"
+StatsText.TextColor3 = Theme.muted
+StatsText.Font = Enum.Font.GothamMedium
+StatsText.TextSize = 7
+StatsText.TextXAlignment = Enum.TextXAlignment.Left
+
+-- NOTIFICATION SYSTEM
+local function notify(title, msg, color)
+    color = color or Theme.accent
+    local notif = Instance.new("Frame", UI)
+    notif.Size = UDim2.new(0, 250, 0, 56)
+    notif.Position = UDim2.new(1, -264, 1, -70)
+    notif.BackgroundColor3 = Theme.panel2
+    notif.BorderSizePixel = 0
+    notif.ZIndex = 200
+    round(notif, 10)
+    stroke(notif, color, 1, 0.18)
+
+    local accentLine = Instance.new("Frame", notif)
+    accentLine.Size = UDim2.new(0, 3, 1, -14)
+    accentLine.Position = UDim2.new(0, 0, 0, 7)
+    accentLine.BackgroundColor3 = color
+    accentLine.BorderSizePixel = 0
+    round(accentLine, 2)
+
+    local icon = Instance.new("ImageLabel", notif)
+    icon.Size = UDim2.new(0, 15, 0, 15)
+    icon.Position = UDim2.new(0, 12, 0, 9)
+    icon.BackgroundTransparency = 1
+    icon.Image = ICONS.BELL
+    icon.ImageColor3 = color
+    icon.ZIndex = 201
+
+    local t = Instance.new("TextLabel", notif)
+    t.Size = UDim2.new(1, -42, 0, 16)
+    t.Position = UDim2.new(0, 35, 0, 7)
+    t.BackgroundTransparency = 1
+    t.Text = title
+    t.TextColor3 = Theme.text
+    t.Font = Enum.Font.GothamBold
+    t.TextSize = 9
+    t.TextXAlignment = Enum.TextXAlignment.Left
+    t.ZIndex = 201
+
+    local d = Instance.new("TextLabel", notif)
+    d.Size = UDim2.new(1, -24, 0, 25)
+    d.Position = UDim2.new(0, 12, 0, 28)
+    d.BackgroundTransparency = 1
+    d.Text = msg
+    d.TextColor3 = Theme.muted
+    d.Font = Enum.Font.Gotham
+    d.TextSize = 7
+    d.TextXAlignment = Enum.TextXAlignment.Left
+    d.TextWrapped = true
+    d.ZIndex = 201
+
+    task.spawn(function()
+        task.wait(2.5)
+        for i = 1, 12 do
+            local alpha = i / 12
+            notif.BackgroundTransparency = alpha
+            icon.ImageTransparency = alpha
+            t.TextTransparency = alpha
+            d.TextTransparency = alpha
+            accentLine.BackgroundTransparency = alpha
+            task.wait(0.02)
+        end
+        notif:Destroy()
+    end)
+end
+
+-- SEARCH STATE
+local allFileCards = {}
+local currentQuery = ""
+
+-- CARD BUILDER
+local totalLoaded = 0
+
+local function buildFileCard(fileInfo)
+    EmptyFrame.Visible = false
+
+    local card = Instance.new("Frame", Scroll)
+    table.insert(allFileCards, {fileInfo=fileInfo, card=card})
+    card.Size = UDim2.new(1, 0, 0, 60)
+    card.BackgroundColor3 = Theme.panel2
+    card.BorderSizePixel = 0
+    round(card, 10)
+    stroke(card, Theme.border, 1, 0.25)
+
+    local isRbxl = fileInfo.ftype == "RBXL"
+
+    local typeBadge = Instance.new("Frame", card)
+    typeBadge.Size = UDim2.new(0, 48, 0, 19)
+    typeBadge.Position = UDim2.new(0, 8, 0, 8)
+    typeBadge.BackgroundColor3 = isRbxl and Color3.fromRGB(55, 91, 145) or Color3.fromRGB(46, 73, 112)
+    typeBadge.BorderSizePixel = 0
+    round(typeBadge, 6)
+
+    local badgeIcon = Instance.new("ImageLabel", typeBadge)
+    badgeIcon.Size = UDim2.new(0, 11, 0, 11)
+    badgeIcon.Position = UDim2.new(0, 5, 0.5, -5.5)
+    badgeIcon.BackgroundTransparency = 1
+    badgeIcon.Image = isRbxl and ICONS.GAMEPAD or ICONS.FILE
+    badgeIcon.ImageColor3 = Color3.fromRGB(205, 225, 255)
+
+    local typeText = Instance.new("TextLabel", typeBadge)
+    typeText.Size = UDim2.new(1, -20, 1, 0)
+    typeText.Position = UDim2.new(0, 19, 0, 0)
+    typeText.BackgroundTransparency = 1
+    typeText.Text = fileInfo.ftype
+    typeText.TextColor3 = Color3.fromRGB(215, 230, 255)
+    typeText.Font = Enum.Font.GothamBold
+    typeText.TextSize = 8
+
+    local nameLbl = Instance.new("TextLabel", card)
+    nameLbl.Size = UDim2.new(1, -170, 0, 17)
+    nameLbl.Position = UDim2.new(0, 64, 0, 7)
+    nameLbl.BackgroundTransparency = 1
+    nameLbl.Text = fileInfo.name
+    nameLbl.TextColor3 = Theme.text
+    nameLbl.Font = Enum.Font.GothamBold
+    nameLbl.TextSize = 10
+    nameLbl.TextXAlignment = Enum.TextXAlignment.Left
+    nameLbl.TextTruncate = Enum.TextTruncate.AtEnd
+
+    local pathLbl = Instance.new("TextLabel", card)
+    pathLbl.Size = UDim2.new(1, -170, 0, 13)
+    pathLbl.Position = UDim2.new(0, 64, 0, 28)
+    pathLbl.BackgroundTransparency = 1
+    pathLbl.Text = fileInfo.path
+    pathLbl.TextColor3 = Theme.muted
+    pathLbl.Font = Enum.Font.Gotham
+    pathLbl.TextSize = 8
+    pathLbl.TextXAlignment = Enum.TextXAlignment.Left
+    pathLbl.TextTruncate = Enum.TextTruncate.AtEnd
+
+    local insertFrame = Instance.new("Frame", card)
+    insertFrame.Size = UDim2.new(0, 76, 0, 30)
+    insertFrame.Position = UDim2.new(1, -84, 0.5, -15)
+    insertFrame.BackgroundColor3 = Color3.fromRGB(30, 45, 67)
+    insertFrame.BorderSizePixel = 0
+    round(insertFrame, 8)
+    local btnStroke = stroke(insertFrame, Theme.accent, 1, 0.45)
+
+    local insertIcon = Instance.new("ImageLabel", insertFrame)
+    insertIcon.Size = UDim2.new(0, 12, 0, 12)
+    insertIcon.Position = UDim2.new(0, 7, 0.5, -6)
+    insertIcon.BackgroundTransparency = 1
+    insertIcon.Image = ICONS.DOWNLOAD
+    insertIcon.ImageColor3 = Theme.accentSoft
+
+    local insertText = Instance.new("TextLabel", insertFrame)
+    insertText.Size = UDim2.new(1, -24, 1, 0)
+    insertText.Position = UDim2.new(0, 22, 0, 0)
+    insertText.BackgroundTransparency = 1
+    insertText.Text = "INSERT"
+    insertText.TextColor3 = Theme.text
+    insertText.Font = Enum.Font.GothamBold
+    insertText.TextSize = 8
+
+    local insertBtn = Instance.new("TextButton", insertFrame)
+    insertBtn.Size = UDim2.new(1, 0, 1, 0)
+    insertBtn.BackgroundTransparency = 1
+    insertBtn.Text = ""
+
+    addHover(insertBtn, insertFrame, Color3.fromRGB(30, 45, 67), Color3.fromRGB(43, 66, 99))
+
+    insertBtn.MouseButton1Click:Connect(function()
+        if insertText.Text == "LOADING" then return end
+        insertText.Text = "LOADING"
+        insertIcon.Image = ICONS.REFRESH
+        insertFrame.BackgroundColor3 = Color3.fromRGB(37, 59, 88)
+
+        task.spawn(function()
+            local ok, msg = loadFile(fileInfo)
+            if ok then
+                insertText.Text = "DONE"
+                insertIcon.Image = ICONS.CHECK
+                insertFrame.BackgroundColor3 = Color3.fromRGB(48, 104, 73)
+                totalLoaded = totalLoaded + 1
+                StatsText.Text = string.format("Status: Ready  |  Files: %d  |  Loaded: %d", #Scroll:GetChildren() - 1, totalLoaded)
+                notify("Success", fileInfo.name .. " dimuat!", Theme.success)
+            else
+                insertText.Text = "FAIL"
+                insertIcon.Image = ICONS.ALERT
+                insertFrame.BackgroundColor3 = Color3.fromRGB(92, 43, 50)
+                notify("Gagal", msg, Theme.danger)
+            end
+            task.wait(2)
+            insertText.Text = "INSERT"
+            insertIcon.Image = ICONS.DOWNLOAD
+            insertFrame.BackgroundColor3 = Color3.fromRGB(30, 45, 67)
+        end)
+    end)
+end
+
+-- SEARCH & FILTER LOGIC
+local function filterCards(query)
+    currentQuery = query:lower():gsub("^%s*", ""):gsub("%s*$", "")
+    local anyVisible = false
+    for _, entry in ipairs(allFileCards) do
+        local name = entry.fileInfo.name:lower()
+        local path = entry.fileInfo.path:lower()
+        local visible = currentQuery == "" or name:find(currentQuery, 1, true) or path:find(currentQuery, 1, true)
+        entry.card.Visible = visible
+        if visible then anyVisible = true end
+    end
+    EmptyFrame.Visible = not anyVisible and #allFileCards == 0
+end
+
+local function tryManualInsert(input)
+    local query = input:gsub("^%s*", ""):gsub("%s*$", "")
+    if query == "" then return end
+
+    for _, entry in ipairs(allFileCards) do
+        if entry.fileInfo.name:lower() == query:lower() or entry.fileInfo.path:lower() == query:lower() then
+            notify("Memuat", entry.fileInfo.name, Theme.accent)
+            task.spawn(function()
+                local ok, msg = loadFile(entry.fileInfo)
+                if ok then
+                    totalLoaded = totalLoaded + 1
+                    StatsText.Text = string.format("Status: Ready  |  Files: %d  |  Loaded: %d", #allFileCards, totalLoaded)
+                    notify("Success", entry.fileInfo.name .. " dimuat!", Theme.success)
+                else
+                    notify("Gagal", msg, Theme.danger)
+                end
+            end)
+            return
+        end
+    end
+
+    local tryPaths = {
+        query,
+        "Delta/workspace/" .. query,
+        "workspace/" .. query,
+        "delta/workspace/" .. query,
+        "Android/Delta/workspace/" .. query,
+    }
+
+    local withExt = {}
+    for _, p in ipairs(tryPaths) do
+        table.insert(withExt, p)
+        if not p:lower():match("%.rbx") then
+            table.insert(withExt, p .. ".rbxm")
+            table.insert(withExt, p .. ".rbxmx")
+            table.insert(withExt, p .. ".rbxl")
+        end
+    end
+
+    for _, path in ipairs(withExt) do
+        local name = path:match("([^/]+)$") or path
+        local ftype = name:lower():match("%.rbxlx?$") and "RBXL" or (name:lower():match("%.rbxmx?$") and "RBXM" or nil)
+        if ftype then
+            local fi = {name=name, path=path, ftype=ftype, folder="manual"}
+            local ok, msg = loadFile(fi)
+            if ok then
+                totalLoaded = totalLoaded + 1
+                notify("Manual Insert OK", name .. " dimuat!", Theme.success)
+                return
+            end
+        end
+    end
+    notify("Tidak Ditemukan", query .. " tidak ada di folder manapun", Theme.danger)
+end
+
+SearchInput:GetPropertyChangedSignal("Text"):Connect(function()
+    filterCards(SearchInput.Text)
+end)
+
+SearchInput.FocusLost:Connect(function(enterPressed)
+    if enterPressed then
+        local query = SearchInput.Text:gsub("^%s*", ""):gsub("%s*$", "")
+        if query ~= "" then
+            tryManualInsert(query)
+        end
+    end
+end)
+
+SearchClearBtn.MouseButton1Click:Connect(function()
+    SearchInput.Text = ""
+    filterCards("")
+end)
+
+-- SCAN LOGIC
+ScanClick.MouseButton1Click:Connect(function()
+    ScanText.Text = "SCANNING..."
+    ScanIcon.Image = ICONS.REFRESH
+    StatusDot.BackgroundColor3 = Theme.accent
+
+    for _, c in ipairs(Scroll:GetChildren()) do
+        if c:IsA("Frame") and c ~= EmptyFrame then c:Destroy() end
+    end
+    allFileCards = {}
+    EmptyFrame.Visible = true
+    totalLoaded = 0
+
+    task.spawn(function()
+        local foundFiles = scanAll()
+        for _, f in ipairs(foundFiles) do
+            buildFileCard(f)
+        end
+
+        StatsText.Text = string.format("Status: Ready  |  Files: %d", #foundFiles)
+        StatusDot.BackgroundColor3 = Theme.success
+        ScanText.Text = "SCAN FILES"
+        ScanIcon.Image = ICONS.SEARCH
+
+        if #foundFiles == 0 then
+            EmptyLabel.Text = "No RBXM/RBXL files detected.\nCheck your executor workspace folder."
+        else
+            notify("Scan Selesai", #foundFiles .. " file terdeteksi", Theme.accent)
+        end
+    end)
+end)
+
+-- MINIMIZE / CLOSE
+CloseClick.MouseButton1Click:Connect(function()
+    if Main.Visible then
+        toggleMain()
+    end
+end)
+
+local minimized = false
+MinClick.MouseButton1Click:Connect(function()
+    minimized = not minimized
+    if minimized then
+        Content.Visible = false
+        StatsBar.Visible = false
+        Main.Size = UDim2.new(0, 390, 0, 62)
+    else
+        Content.Visible = true
+        StatsBar.Visible = true
+        Main.Size = UDim2.new(0, 390, 0, 470)
+    end
+end)
+
+
+-- HOOKS (Anti-Putus Studio Lite)
+--                                                                        
+task.spawn(function()
+    if hookmetamethod then
+        local oldNamecall
+        oldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
+            local method = getnamecallmethod()
+            local args = {...}
+
+            if not checkcaller() and method == "InvokeServer" then
+                if self.Name == "GetScriptSourceServerFunction" then
+                    local target = tostring(args[1])
+                    for obj, src in pairs(_G.Hyaz_RAW_SOURCES) do
+                        if typeof(obj) == "Instance" and (obj.ClassName .. obj.Name) == target then
+                            if src and src ~= "" then return src end
+                        end
+                    end
+                    for _, place in ipairs({workspace, ReplicatedStorage, _G.sss, _G.ss, game:GetService("StarterGui"), game:GetService("StarterPlayer"), LocalPlayer:FindFirstChild("PlayerGui"), LocalPlayer:FindFirstChild("Backpack")}) do
+                        if place then
+                            for _, obj in ipairs(place:GetDescendants()) do
+                                if obj:IsA("LuaSourceContainer") and (obj.ClassName .. obj.Name) == target then
+                                    local src = _G.Hyaz_RAW_SOURCES[obj]
+                                    if src and src ~= "" then return src end
+                                end
+                           end
+                        end
+                    end
+                end
+
+                if self.Name == "SaveScriptSourceServerFunction" then
+                    local target = tostring(args[1])
+                    local newSource = tostring(args[2])
+                    for obj, _ in pairs(_G.Hyaz_RAW_SOURCES) do
+                        if typeof(obj) == "Instance" and (obj.ClassName .. obj.Name) == target then
+                            _G.Hyaz_RAW_SOURCES[obj] = newSource
+                            break
+                        end
+                    end
+                end
+            end
+            return oldNamecall(self, ...)
+        end)
+    end
+
+    if hookfunction then
+        local oldRequire
+        oldRequire = hookfunction(getrenv().require or require, function(module)
+            if typeof(module) == "Instance" and module:IsA("ModuleScript") then
+                local src = _G.Hyaz_RAW_SOURCES[module]
+                if src and src ~= "" then
+                    local func, err = loadstring(src)
+                    if func then 
+                        local success, result = pcall(func)
+                        if success then return result end
+                    end
+                end
+            end
+            return oldRequire(module)
+        end)
+
+        local oldGetObjects
+        oldGetObjects = hookfunction(game.GetObjects, function(self, url, ...)
+            local assetId = tostring(url):match("%d+")
+            if assetId then triggerServerLoad(assetId) end
+            local objects = oldGetObjects(self, url, ...)
+            if objects then
+                for _, obj in ipairs(objects) do
+                    pcall(function() injectAllScripts(obj, {}) end)
+                    pcall(function() ApplyStudioLiteProperties(obj) end)
+                    pcall(function() LoadAssetsToSLServer(obj) end)
+                end
+            end
+            return objects
+        end)
+
+        local oldLoadAsset
+        oldLoadAsset = hookfunction(InsertService.LoadAsset, function(self, assetId, ...)
+            triggerServerLoad(tostring(assetId))
+            local obj = oldLoadAsset(self, assetId, ...)
+            if obj then
+                pcall(function() injectAllScripts(obj, {}) end)
+                pcall(function() ApplyStudioLiteProperties(obj) end)
+                pcall(function() LoadAssetsToSLServer(obj) end)
+            end
+            return obj
+        end)
+    end
+end)
+
+print("[Hyaz] IMPORTER v62.0 LOADED")
