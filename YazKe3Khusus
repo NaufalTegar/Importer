@@ -935,7 +935,7 @@ TitleText.TextXAlignment = Enum.TextXAlignment.Left
 local CloseBtn = Instance.new("Frame", TitleBar)
 CloseBtn.Size = UDim2.new(0, 22, 0, 22)
 CloseBtn.Position = UDim2.new(1, -28, 0.5, -11)
-CloseBtn.BackgroundColor3 = Color3.fromRGB(10, 54, 26)
+CloseBtn.BackgroundColor3 = Color3.fromRGB(90, 0, 0) -- merah gelap
 Instance.new("UICorner", CloseBtn).CornerRadius = UDim.new(0, 5)
 
 local CloseIcon = Instance.new("TextLabel", CloseBtn)
@@ -943,7 +943,7 @@ CloseIcon.Size = UDim2.new(0, 12, 0, 12)
 CloseIcon.Position = UDim2.new(0.5, -6, 0.5, -6)
 CloseIcon.BackgroundTransparency = 1
 CloseIcon.Text = "X"
-CloseIcon.TextColor3 = Color3.fromRGB(185, 255, 170)
+CloseIcon.TextColor3 = Color3.fromRGB(255, 120, 120) -- merah terang
 CloseIcon.Font = Enum.Font.GothamBold
 CloseIcon.TextSize = 12
 CloseIcon.TextXAlignment = Enum.TextXAlignment.Center
@@ -958,7 +958,7 @@ CloseClick.Text = ""
 local MinBtn = Instance.new("Frame", TitleBar)
 MinBtn.Size = UDim2.new(0, 22, 0, 22)
 MinBtn.Position = UDim2.new(1, -54, 0.5, -11)
-MinBtn.BackgroundColor3 = Color3.fromRGB(10, 54, 26)
+MinBtn.BackgroundColor3 = Color3.fromRGB(90, 0, 0) -- merah gelap
 Instance.new("UICorner", MinBtn).CornerRadius = UDim.new(0, 5)
 
 local MinIcon = Instance.new("ImageLabel", MinBtn)
@@ -966,7 +966,7 @@ MinIcon.Size = UDim2.new(0, 12, 0, 12)
 MinIcon.Position = UDim2.new(0.5, -6, 0.5, -6)
 MinIcon.BackgroundTransparency = 1
 MinIcon.Image = ICONS.MINIMIZE
-MinIcon.ImageColor3 = Color3.fromRGB(185, 255, 170)
+MinIcon.ImageColor3 = Color3.fromRGB(255, 120, 120) -- merah terang
 
 local MinClick = Instance.new("TextButton", MinBtn)
 MinClick.Size = UDim2.new(1, 0, 1, 0)
@@ -990,7 +990,7 @@ UserInputService.InputEnded:Connect(function(input)
     if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then dragToggle = false end
 end)
 
--- Toggle panel visibility   the single toggle below the Roblox menu opens/closes Main
+-- Toggle panel visibility
 local function toggleMain()
     Main.Visible = not Main.Visible
     ToggleIcon.Image = Main.Visible and ICONS.CHEVRON_RIGHT or ICONS.CHEVRON_LEFT
@@ -1002,26 +1002,26 @@ ToggleBtn.MouseButton1Click:Connect(toggleMain)
 local Content = Instance.new("Frame", Main)
 Content.Size = UDim2.new(1, -16, 1, -74)
 Content.Position = UDim2.new(0, 8, 0, 42)
-Content.BackgroundColor3 = Color3.fromRGB(8, 27, 15)
+Content.BackgroundColor3 = Color3.fromRGB(60, 0, 0) -- merah gelap
 Content.BorderSizePixel = 0
 Instance.new("UICorner", Content).CornerRadius = UDim.new(0, 8)
 
 local ContentStroke = Instance.new("UIStroke", Content)
 ContentStroke.Thickness = 1
-ContentStroke.Color = Color3.fromRGB(34, 112, 55)
+ContentStroke.Color = Color3.fromRGB(200, 40, 40) -- stroke merah
 
 -- SCAN BUTTON WITH ANIMATED GRADIENT & VECTOR SEARCH ICON
 local ScanBtn = Instance.new("Frame", Content)
 ScanBtn.Size = UDim2.new(1, -12, 0, 30)
 ScanBtn.Position = UDim2.new(0, 6, 0, 6)
-ScanBtn.BackgroundColor3 = Color3.fromRGB(174, 245, 145)
+ScanBtn.BackgroundColor3 = Color3.fromRGB(200, 40, 40) -- merah medium
 Instance.new("UICorner", ScanBtn).CornerRadius = UDim.new(0, 6)
 
 local ScanGrad = Instance.new("UIGradient", ScanBtn)
 ScanGrad.Color = ColorSequence.new({
-    ColorSequenceKeypoint.new(0, Color3.fromRGB(220, 255, 190)),
-    ColorSequenceKeypoint.new(0.5, Color3.fromRGB(80, 205, 105)),
-    ColorSequenceKeypoint.new(1, Color3.fromRGB(170, 245, 140))
+    ColorSequenceKeypoint.new(0, Color3.fromRGB(255, 200, 200)), -- merah muda
+    ColorSequenceKeypoint.new(0.5, Color3.fromRGB(200, 40, 40)), -- merah medium
+    ColorSequenceKeypoint.new(1, Color3.fromRGB(140, 20, 20))    -- merah gelap
 })
 registerGradientAnimation(ScanGrad, 50, "rotate")
 
@@ -1030,14 +1030,14 @@ ScanIcon.Size = UDim2.new(0, 14, 0, 14)
 ScanIcon.Position = UDim2.new(0.5, -48, 0.5, -7)
 ScanIcon.BackgroundTransparency = 1
 ScanIcon.Image = ICONS.SEARCH
-ScanIcon.ImageColor3 = Color3.fromRGB(3, 35, 14)
+ScanIcon.ImageColor3 = Color3.fromRGB(200, 40, 40) -- ikon merah
 
 local ScanText = Instance.new("TextLabel", ScanBtn)
 ScanText.Size = UDim2.new(0, 80, 1, 0)
 ScanText.Position = UDim2.new(0.5, -28, 0, 0)
 ScanText.BackgroundTransparency = 1
 ScanText.Text = "SCAN FILES"
-ScanText.TextColor3 = Color3.fromRGB(3, 35, 14)
+ScanText.TextColor3 = Color3.fromRGB(255, 200, 200) -- teks merah muda
 ScanText.Font = Enum.Font.GothamBold
 ScanText.TextSize = 11
 ScanText.TextXAlignment = Enum.TextXAlignment.Left
@@ -1047,24 +1047,24 @@ ScanClick.Size = UDim2.new(1, 0, 1, 0)
 ScanClick.BackgroundTransparency = 1
 ScanClick.Text = ""
 
-
 -- SEARCH / MANUAL INPUT BAR
 local SearchBar = Instance.new("Frame", Content)
 SearchBar.Size = UDim2.new(1, -12, 0, 26)
 SearchBar.Position = UDim2.new(0, 6, 0, 40)
-SearchBar.BackgroundColor3 = Color3.fromRGB(10, 38, 18)
+SearchBar.BackgroundColor3 = Color3.fromRGB(90, 0, 0) -- merah gelap
 SearchBar.BorderSizePixel = 0
 Instance.new("UICorner", SearchBar).CornerRadius = UDim.new(0, 5)
+
 local SearchStroke = Instance.new("UIStroke", SearchBar)
 SearchStroke.Thickness = 1
-SearchStroke.Color = Color3.fromRGB(45, 130, 60)
+SearchStroke.Color = Color3.fromRGB(200, 40, 40) -- stroke merah
 
 local SearchIcon = Instance.new("ImageLabel", SearchBar)
 SearchIcon.Size = UDim2.new(0, 12, 0, 12)
 SearchIcon.Position = UDim2.new(0, 6, 0.5, -6)
 SearchIcon.BackgroundTransparency = 1
 SearchIcon.Image = ICONS.SEARCH
-SearchIcon.ImageColor3 = Color3.fromRGB(130, 210, 130)
+SearchIcon.ImageColor3 = Color3.fromRGB(255, 120, 120) -- ikon merah terang
 
 local SearchInput = Instance.new("TextBox", SearchBar)
 SearchInput.Size = UDim2.new(1, -48, 1, 0)
@@ -1072,8 +1072,8 @@ SearchInput.Position = UDim2.new(0, 22, 0, 0)
 SearchInput.BackgroundTransparency = 1
 SearchInput.Text = ""
 SearchInput.PlaceholderText = "Cari file / ketik nama (Enter = insert)"
-SearchInput.PlaceholderColor3 = Color3.fromRGB(70, 130, 75)
-SearchInput.TextColor3 = Color3.fromRGB(200, 255, 190)
+SearchInput.PlaceholderColor3 = Color3.fromRGB(200, 120, 120) -- placeholder merah
+SearchInput.TextColor3 = Color3.fromRGB(255, 200, 200) -- teks merah muda
 SearchInput.Font = Enum.Font.Gotham
 SearchInput.TextSize = 9
 SearchInput.TextXAlignment = Enum.TextXAlignment.Left
@@ -1084,7 +1084,7 @@ SearchClearBtn.Size = UDim2.new(0, 20, 0, 20)
 SearchClearBtn.Position = UDim2.new(1, -22, 0.5, -10)
 SearchClearBtn.BackgroundTransparency = 1
 SearchClearBtn.Text = "x"
-SearchClearBtn.TextColor3 = Color3.fromRGB(100, 180, 100)
+SearchClearBtn.TextColor3 = Color3.fromRGB(200, 40, 40) -- merah medium
 SearchClearBtn.Font = Enum.Font.GothamBold
 SearchClearBtn.TextSize = 10
 
@@ -1094,7 +1094,7 @@ Scroll.Size = UDim2.new(1, -12, 1, -80)
 Scroll.Position = UDim2.new(0, 6, 0, 72)
 Scroll.BackgroundTransparency = 1
 Scroll.ScrollBarThickness = 3
-Scroll.ScrollBarImageColor3 = Color3.fromRGB(92, 208, 105)
+Scroll.ScrollBarImageColor3 = Color3.fromRGB(200, 40, 40) -- merah
 Scroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
 
 local Layout = Instance.new("UIListLayout", Scroll)
@@ -1111,14 +1111,14 @@ EmptyIcon.Size = UDim2.new(0, 26, 0, 26)
 EmptyIcon.Position = UDim2.new(0.5, -13, 0, 16)
 EmptyIcon.BackgroundTransparency = 1
 EmptyIcon.Image = ICONS.FOLDER
-EmptyIcon.ImageColor3 = Color3.fromRGB(90, 220, 110)
+EmptyIcon.ImageColor3 = Color3.fromRGB(200, 40, 40) -- merah
 
 local EmptyLabel = Instance.new("TextLabel", EmptyFrame)
 EmptyLabel.Size = UDim2.new(1, -20, 0, 36)
 EmptyLabel.Position = UDim2.new(0, 10, 0, 48)
 EmptyLabel.BackgroundTransparency = 1
 EmptyLabel.Text = "Belum ada file terdeteksi.\nTekan 'SCAN FILES' untuk mencari file RBXM/RBXL."
-EmptyLabel.TextColor3 = Color3.fromRGB(125, 190, 130)
+EmptyLabel.TextColor3 = Color3.fromRGB(255, 200, 200) -- teks merah muda
 EmptyLabel.Font = Enum.Font.Gotham
 EmptyLabel.TextSize = 10
 EmptyLabel.TextWrapped = true
@@ -1127,7 +1127,7 @@ EmptyLabel.TextWrapped = true
 local StatsBar = Instance.new("Frame", Main)
 StatsBar.Size = UDim2.new(1, -16, 0, 22)
 StatsBar.Position = UDim2.new(0, 8, 1, -26)
-StatsBar.BackgroundColor3 = Color3.fromRGB(8, 27, 15)
+StatsBar.BackgroundColor3 = Color3.fromRGB(90, 0, 0) -- merah gelap
 StatsBar.BorderSizePixel = 0
 Instance.new("UICorner", StatsBar).CornerRadius = UDim.new(0, 5)
 
@@ -1136,18 +1136,18 @@ StatsText.Size = UDim2.new(1, -10, 1, 0)
 StatsText.Position = UDim2.new(0, 6, 0, 0)
 StatsText.BackgroundTransparency = 1
 StatsText.Text = "Status: Ready  |  Files: 0"
-StatsText.TextColor3 = Color3.fromRGB(140, 220, 145)
+StatsText.TextColor3 = Color3.fromRGB(255, 180, 180) -- teks merah muda
 StatsText.Font = Enum.Font.Gotham
 StatsText.TextSize = 9
 StatsText.TextXAlignment = Enum.TextXAlignment.Left
 
 -- NOTIFICATION SYSTEM WITH VECTOR BELL ICON
 local function notify(title, msg, color)
-    color = color or Color3.fromRGB(200, 200, 210)
+    color = color or Color3.fromRGB(200, 40, 40) -- default merah
     local notif = Instance.new("Frame", UI)
     notif.Size = UDim2.new(0, 220, 0, 42)
     notif.Position = UDim2.new(1, -230, 1, -55)
-    notif.BackgroundColor3 = Color3.fromRGB(7, 29, 14)
+    notif.BackgroundColor3 = Color3.fromRGB(90, 0, 0) -- merah gelap
     notif.BorderSizePixel = 0
     Instance.new("UICorner", notif).CornerRadius = UDim.new(0, 6)
 
@@ -1165,14 +1165,16 @@ local function notify(title, msg, color)
     local t = Instance.new("TextLabel", notif)
     t.Size = UDim2.new(1, -28, 0, 14); t.Position = UDim2.new(0, 26, 0, 4)
     t.BackgroundTransparency = 1; t.Text = title
-    t.TextColor3 = Color3.fromRGB(205, 255, 190); t.Font = Enum.Font.GothamBold
-    t.TextSize = 10; t.TextXAlignment = Enum.TextXAlignment.Left
+    t.TextColor3 = Color3.fromRGB(255, 180, 180) -- teks merah muda
+    t.Font = Enum.Font.GothamBold; t.TextSize = 10
+    t.TextXAlignment = Enum.TextXAlignment.Left
 
     local d = Instance.new("TextLabel", notif)
     d.Size = UDim2.new(1, -12, 0, 16); d.Position = UDim2.new(0, 8, 0, 18)
     d.BackgroundTransparency = 1; d.Text = msg
-    d.TextColor3 = Color3.fromRGB(135, 195, 140); d.Font = Enum.Font.Gotham
-    d.TextSize = 8; d.TextXAlignment = Enum.TextXAlignment.Left
+    d.TextColor3 = Color3.fromRGB(200, 120, 120) -- teks merah
+    d.Font = Enum.Font.Gotham; d.TextSize = 8
+    d.TextXAlignment = Enum.TextXAlignment.Left
     d.TextWrapped = true
 
     task.spawn(function()
@@ -1187,6 +1189,7 @@ local function notify(title, msg, color)
         notif:Destroy()
     end)
 end
+
 
 -- SEARCH STATE (declared before buildFileCard so upvalue resolves correctly)
 local allFileCards = {}
