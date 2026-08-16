@@ -1,0 +1,789 @@
+-- HYAZ RBXL IMPORTER V1.0
+-- Standalone RBXL binary importer extracted from HYAZ ULTIMATE.
+-- Focus: .rbxl binary parsing + decompression + instance reconstruction.
+-- RBXM/RBXMX/UI utama tidak ikut di file ini agar engine lebih mudah diuji.
+
+if not game:IsLoaded() then game.Loaded:Wait() end
+
+local Players = game:GetService("Players")
+local HttpService = game:GetService("HttpService")
+local CoreGui = game:GetService("CoreGui")
+local LocalPlayer = Players.LocalPlayer
+local GuiParent = (pcall(function() return CoreGui.Name end) and CoreGui) or LocalPlayer:WaitForChild("PlayerGui")
+
+_G.Hyaz_RAW_SOURCES = _G.Hyaz_RAW_SOURCES or {}
+
+-- ============================================================
+-- CONFIG
+-- ============================================================
+local CONFIG = {
+    WindowName = "HYAZ RBXL IMPORTER V1.0",
+    ScanLabel = "SCAN RBXL",
+    MaxFiles = 80,
+    KeepPreviousImports = true,
+    ImportFolderSuffix = " [RBXL]",
+}
+
+-- ============================================================
+-- RBXL ENGINE
+-- ============================================================
+-- RBXM FILE PARSER (LZ4 + Binary Format)
+--                                                                        
+local function Buffer(str, allowOverflows)
+    local Stream = { Offset = 0, Source = str, Length = string.len(str), AllowOverflows = (allowOverflows == nil and true) or allowOverflows }
+    function Stream:read(len, shift)
+        len = len or 1; shift = (shift == nil and true) or shift
+        local dat = string.sub(self.Source, self.Offset + 1, self.Offset + len)
+        if shift then self:seek(len) end
+        return dat
+    end
+    function Stream:seek(len) self.Offset = math.clamp(self.Offset + len, 0, self.Length) end
+    function Stream:readNumber(fmt, shift)
+        fmt = fmt or "I1"; local chunk = self:read(string.packsize(fmt), shift); return string.unpack(fmt, chunk)
+    end
+    function Stream:append(s) self.Source = self.Source .. s; self.Length = #self.Source end
+    function Stream:toEnd() self.Offset = self.Length end
+    return Stream
+end
+
+local function transformInt(x) return (x % 2 == 0) and (x / 2) or (-(x + 1) / 2) end
+local function rbxF32(x) x = bit32.rrotate(x, 1); return string.unpack(">f", string.pack(">I4", x)) end
+
+local basicTypes = {}
+function basicTypes.String(buffer) return buffer:read(buffer:readNumber("<I4")) end
+function basicTypes.Int32(buffer) return transformInt(buffer:readNumber(">I4")) end
+function basicTypes.Int64(buffer) return transformInt(buffer:readNumber(">I8")) end
+function basicTypes.Float32(buffer) return rbxF32(buffer:readNumber(">I4")) end
+function basicTypes.Float64(buffer) return buffer:readNumber("<d") end
+
+function basicTypes.InterleaveArrayWithSize(buffer, count, sizeof)
+    if count < 0 then return Buffer("", false) end
+    local stream = buffer:read(count * sizeof); local out = table.create(count)
+    for i = 1, count do
+        local chunk = table.create(sizeof)
+        for s = 0, sizeof - 1 do
+            local bitPos = i + (count * s); chunk[s+1] = string.sub(stream, bitPos, bitPos)
+        end
+        out[i] = table.concat(chunk)
+    end
+    return Buffer(table.concat(out), false)
+end
+
+function basicTypes.unsignedIntArray(buffer, count)
+    if count < 1 then return {} end
+    local o = table.create(count); local strings = basicTypes.InterleaveArrayWithSize(buffer, count, 4)
+    for i = 1, count do o[i] = strings:readNumber("<I4") end
+    return o
+end
+
+function basicTypes.Int32Array(buffer, count)
+    if count < 1 then return {} end
+    local o = table.create(count); local strings = basicTypes.InterleaveArrayWithSize(buffer, count, 4)
+    for i = 1, count do o[i] = basicTypes.Int32(strings) end
+    return o
+end
+
+function basicTypes.Int64Array(buffer, count)
+    if count < 1 then return {} end
+    local o = table.create(count); local strings = basicTypes.InterleaveArrayWithSize(buffer, count, 8)
+    for i = 1, count do o[i] = basicTypes.Int64(strings) end
+    return o
+end
+
+function basicTypes.RbxF32Array(buffer, count)
+    if count < 1 then return {} end
+    local o = table.create(count); local strings = basicTypes.InterleaveArrayWithSize(buffer, count, 4)
+    for i = 1, count do o[i] = basicTypes.Float32(strings) end
+    return o
+end
+
+function basicTypes.RefArray(buffer, count)
+    if count < 1 then return {} end
+    local o = table.create(count); local refs = basicTypes.Int32Array(buffer, count); local last = 0
+    for i = 1, count do local ref = last + refs[i]; o[i] = ref; last = ref end
+    return o
+end
+
+local function lz4(lz4data)
+    local inputStream = Buffer(lz4data)
+    local compressedLen = string.unpack("<I4", inputStream:read(4))
+    local decompressedLen = string.unpack("<I4", inputStream:read(4))
+    local reserved = string.unpack("<I4", inputStream:read(4))
+    if reserved ~= 0 then error("not lz4") end
+    if compressedLen == 0 then return inputStream:read(decompressedLen) end
+    local outputStream = Buffer("")
+    repeat
+        local token = string.byte(inputStream:read())
+        local litLen = bit32.rshift(token, 4)
+        local matLen = bit32.band(token, 15) + 4
+        if litLen >= 15 then
+            repeat local nextByte = string.byte(inputStream:read()); litLen = litLen + nextByte until nextByte ~= 0xFF
+        end
+        local literal = inputStream:read(litLen); outputStream:append(literal); outputStream:toEnd()
+        if outputStream.Length < decompressedLen then
+            local offset = string.unpack("<I2", inputStream:read(2))
+            if matLen >= 19 then
+                repeat local nextByte = string.byte(inputStream:read()); matLen = matLen + nextByte until nextByte ~= 0xFF
+            end
+            outputStream:seek(-offset)
+            local pos = outputStream.Offset; local match = outputStream:read(matLen)
+            local unreadBytes = outputStream.LastUnreadBytes or 0
+            local extra
+            if unreadBytes then
+                repeat
+                    outputStream.Offset = pos; extra = outputStream:read(unreadBytes)
+                    unreadBytes = outputStream.LastUnreadBytes or 0; match = match .. extra
+                until unreadBytes <= 0
+            end
+            outputStream:append(match); outputStream:toEnd()
+        end
+    until outputStream.Length >= decompressedLen
+    return outputStream.Source
+end
+
+local function b64encode(str)
+    local chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+    local out = {}
+    for i = 1, #str, 3 do
+        local b0, b1, b2 = string.byte(str, i, i+2)
+        local b = bit32.lshift(b0, 16) + bit32.lshift(b1 or 0, 8) + (b2 or 0)
+        table.insert(out, chars:sub(bit32.extract(b, 18, 6)+1, bit32.extract(b, 18, 6)+1))
+        table.insert(out, chars:sub(bit32.extract(b, 12, 6)+1, bit32.extract(b, 12, 6)+1))
+        table.insert(out, b1 and chars:sub(bit32.extract(b, 6, 6)+1, bit32.extract(b, 6, 6)+1) or "=")
+        table.insert(out, b2 and chars:sub(bit32.band(b, 63)+1, bit32.band(b, 63)+1) or "=")
+    end
+    return table.concat(out)
+end
+
+local function _bytesToString(v)
+    if type(v) == "string" then return v end
+    local ok, out = pcall(function()
+        if type(buffer) == "table" and type(buffer.tostring) == "function" then
+            return buffer.tostring(v)
+        end
+        return nil
+    end)
+    if ok and type(out) == "string" then return out end
+    local ok2, out2 = pcall(function()
+        if type(buffer) == "table" and type(buffer.len) == "function" and type(buffer.readu8) == "function" then
+            local n = buffer.len(v)
+            local parts = table.create(math.ceil(n / 4096))
+            local k = 0
+            for i = 0, n - 1, 4096 do
+                local e = math.min(n - 1, i + 4095)
+                local chars = table.create(e - i + 1)
+                for j = i, e do chars[j - i + 1] = string.char(buffer.readu8(v, j)) end
+                k += 1
+                parts[k] = table.concat(chars)
+            end
+            return table.concat(parts)
+        end
+        return nil
+    end)
+    if ok2 and type(out2) == "string" then return out2 end
+    return nil
+end
+
+local function _zstdViaEncodingService(data)
+    local ok, result = pcall(function()
+        local EncodingService = game:GetService("EncodingService")
+        local CompressionAlgorithm = Enum.CompressionAlgorithm
+        if type(buffer) ~= "table" or type(buffer.fromstring) ~= "function" then error("buffer API unavailable") end
+        if not CompressionAlgorithm or not CompressionAlgorithm.Zstd then error("Zstd enum unavailable") end
+        local compressed = buffer.fromstring(data)
+        local decoded = EncodingService:DecompressBuffer(compressed, CompressionAlgorithm.Zstd)
+        local text = _bytesToString(decoded)
+        if not text then error("failed to convert decompressed buffer") end
+        return text
+    end)
+    return ok and result or nil
+end
+
+local function _zstdViaJSON(data)
+    local zbase64 = b64encode(data)
+    local ok, result = pcall(function()
+        local x = HttpService:JSONDecode('{"m":null,"t":"buffer","zbase64":"' .. zbase64 .. '"}')
+        local text = _bytesToString(x)
+        if not text then error("JSONDecode returned a buffer but this runtime has no buffer->string bridge") end
+        return text
+    end)
+    return ok and result or nil
+end
+
+local function zstd(stream)
+    local out = _zstdViaEncodingService(stream)
+    if out then return out end
+    out = _zstdViaJSON(stream)
+    if out then return out end
+    error("ZSTD decompressor tidak tersedia/compatible di environment ini")
+end
+
+local function _readVector3(buffer, count)
+    local xs = basicTypes.RbxF32Array(buffer, count)
+    local ys = basicTypes.RbxF32Array(buffer, count)
+    local zs = basicTypes.RbxF32Array(buffer, count)
+    local out = table.create(count)
+    for i = 1, count do out[i] = Vector3.new(xs[i], ys[i], zs[i]) end
+    return out
+end
+
+local function _readColor3(buffer, count)
+    local rs = basicTypes.RbxF32Array(buffer, count)
+    local gs = basicTypes.RbxF32Array(buffer, count)
+    local bs = basicTypes.RbxF32Array(buffer, count)
+    local out = table.create(count)
+    for i = 1, count do out[i] = Color3.new(rs[i], gs[i], bs[i]) end
+    return out
+end
+
+local function _readVector2(buffer, count)
+    local xs = basicTypes.RbxF32Array(buffer, count)
+    local ys = basicTypes.RbxF32Array(buffer, count)
+    local out = table.create(count)
+    for i = 1, count do out[i] = Vector2.new(xs[i], ys[i]) end
+    return out
+end
+
+local function _readCFrames(buffer, count)
+    local ids = table.create(count)
+    local rot = table.create(count)
+    for i = 1, count do
+        local id = string.byte(buffer:read())
+        ids[i] = id
+        if id == 0 then
+            local m = table.create(9)
+            for j = 1, 9 do m[j] = buffer:readNumber("<f") end
+            rot[i] = m
+        end
+    end
+    local pos = _readVector3(buffer, count)
+    -- RBXL rotation IDs are exact matrices. Do not reconstruct them with
+    -- CFrame.Angles(), because Roblox's matrix order is part of the format.
+    local function M(a,b,c,d,e,f,g,h,i)
+        return CFrame.new(0,0,0,a,b,c,d,e,f,g,h,i)
+    end
+    local special = {
+        [0x02]=M(1,0,0,0,1,0,0,0,1),
+        [0x03]=M(1,0,0,0,0,-1,0,1,0),
+        [0x05]=M(1,0,0,0,-1,0,0,0,-1),
+        [0x06]=M(1,0,0,0,0,1,0,-1,0),
+        [0x07]=M(0,1,0,1,0,0,0,0,-1),
+        [0x09]=M(0,0,1,1,0,0,0,1,0),
+        [0x0A]=M(0,-1,0,1,0,0,0,0,1),
+        [0x0C]=M(0,0,-1,1,0,0,0,-1,0),
+        [0x0D]=M(0,1,0,0,0,1,1,0,0),
+        [0x0E]=M(0,0,-1,0,1,0,1,0,0),
+        [0x10]=M(0,-1,0,0,0,-1,1,0,0),
+        [0x11]=M(0,0,1,0,-1,0,1,0,0),
+        [0x14]=M(-1,0,0,0,1,0,0,0,-1),
+        [0x15]=M(-1,0,0,0,0,1,0,1,0),
+        [0x17]=M(-1,0,0,0,-1,0,0,0,1),
+        [0x18]=M(-1,0,0,0,0,-1,0,-1,0),
+        [0x19]=M(0,1,0,-1,0,0,0,0,1),
+        [0x1B]=M(0,0,-1,-1,0,0,0,1,0),
+        [0x1C]=M(0,-1,0,-1,0,0,0,0,-1),
+        [0x1E]=M(0,0,1,-1,0,0,0,-1,0),
+        [0x1F]=M(0,1,0,0,0,-1,-1,0,0),
+        [0x20]=M(0,0,1,0,1,0,-1,0,0),
+        [0x22]=M(0,-1,0,0,0,1,-1,0,0),
+        [0x23]=M(0,0,-1,0,-1,0,-1,0,0),
+    }
+    local out = table.create(count)
+    for i = 1, count do
+        local p = pos[i]
+        if ids[i] ~= 0 then out[i] = CFrame.new(p) * (special[ids[i]] or CFrame.new())
+        else
+            local m = rot[i]
+            out[i] = CFrame.new(p.X,p.Y,p.Z,m[1],m[2],m[3],m[4],m[5],m[6],m[7],m[8],m[9])
+        end
+    end
+    return out
+end
+
+local function _decodePropertyArray(buffer, typeID, count, sharedStrings)
+    if typeID == 0x01 or typeID == 0x1D then
+        local a = table.create(count); for i=1,count do a[i]=basicTypes.String(buffer) end; return a
+    elseif typeID == 0x02 then
+        local a=table.create(count); for i=1,count do a[i]=string.byte(buffer:read())~=0 end; return a
+    elseif typeID == 0x03 then return basicTypes.Int32Array(buffer,count)
+    elseif typeID == 0x04 then return basicTypes.RbxF32Array(buffer,count)
+    elseif typeID == 0x05 then local a=table.create(count); for i=1,count do a[i]=basicTypes.Float64(buffer) end; return a
+    elseif typeID == 0x0B then local raw=basicTypes.unsignedIntArray(buffer,count); return raw
+    elseif typeID == 0x0C then return _readColor3(buffer,count)
+    elseif typeID == 0x0D then return _readVector2(buffer,count)
+    elseif typeID == 0x0E then return _readVector3(buffer,count)
+    elseif typeID == 0x10 then return _readCFrames(buffer,count)
+    elseif typeID == 0x12 then return basicTypes.unsignedIntArray(buffer,count)
+    elseif typeID == 0x13 then return basicTypes.RefArray(buffer,count)
+    elseif typeID == 0x14 then
+        local a=table.create(count); for i=1,count do a[i]=Vector3int16.new(buffer:readNumber("<i2"),buffer:readNumber("<i2"),buffer:readNumber("<i2")) end; return a
+    elseif typeID == 0x17 then
+        local a=table.create(count); for i=1,count do a[i]=NumberRange.new(buffer:readNumber("<f"),buffer:readNumber("<f")) end; return a
+    elseif typeID == 0x18 then
+        local xs=_readVector2(buffer,count); local ys=_readVector2(buffer,count); local a=table.create(count); for i=1,count do a[i]=Rect.new(xs[i],ys[i]) end; return a
+    elseif typeID == 0x1A then
+        local rs=table.create(count); local gs=table.create(count); local bs=table.create(count); for i=1,count do rs[i]=string.byte(buffer:read()) end; for i=1,count do gs[i]=string.byte(buffer:read()) end; for i=1,count do bs[i]=string.byte(buffer:read()) end; local a=table.create(count); for i=1,count do a[i]=Color3.fromRGB(rs[i],gs[i],bs[i]) end; return a
+    elseif typeID == 0x1B then return basicTypes.Int64Array(buffer,count)
+    elseif typeID == 0x1C then
+        local idx=basicTypes.unsignedIntArray(buffer,count); local a=table.create(count); for i=1,count do a[i]=sharedStrings and sharedStrings[idx[i]] or nil end; return a
+    elseif typeID == 0x1F then
+        local a=table.create(count); for i=1,count do a[i]={Index=buffer:readNumber("<I4"),Time=buffer:readNumber("<I4"),Random=buffer:readNumber("<I8")} end; return a
+    elseif typeID == 0x20 then
+        local a=table.create(count); for i=1,count do local family=basicTypes.String(buffer); local weight=buffer:readNumber("<I2"); local style=string.byte(buffer:read()); local cached=basicTypes.String(buffer); a[i]={Family=family,Weight=weight,Style=style,CachedFaceId=cached} end; return a
+    end
+    return nil
+end
+
+local function parseRBXLBinary(data)
+    local r = Buffer(data, false)
+    if r:read(14) ~= "<roblox!" .. string.char(137,255,13,10,26,10) then return nil, "RBXL header tidak valid" end
+    local version=r:readNumber("<I2"); if version~=0 then return nil,"RBXL version tidak didukung: "..tostring(version) end
+    local classCount=r:readNumber("<I4"); local instCount=r:readNumber("<I4"); r:read(8)
+    local chunks={META={},SSTR={},INST={},PROP={},PRNT={},SIGN={},["END\0"]={}}
+    while r.Offset < r.Length do
+        local sig=r:read(4); local compressed=r:readNumber("<I4"); local decompressed=r:readNumber("<I4"); r:read(4)
+        if sig=="END\0" then chunks[sig][#chunks[sig]+1]={Data=r:read(decompressed)}; break end
+        local payload
+        if compressed==0 then payload=r:read(decompressed) else
+            local raw=r:read(compressed); local magic=string.sub(raw,1,4)
+            if magic==string.char(40,181,47,253) then payload=zstd(raw) else payload=lz4(string.pack("<I4I4I4", compressed, decompressed, 0) .. raw) end
+            if #payload ~= decompressed then warn("[Hyaz RBXL] chunk "..sig.." length mismatch: "..#payload.." / "..decompressed) end
+        end
+        if not chunks[sig] then return nil,"RBXL chunk tidak dikenal: "..sig end
+        chunks[sig][#chunks[sig]+1]={Data=payload}
+    end
+    local shared={}
+    for _,ch in ipairs(chunks.SSTR) do local b=Buffer(ch.Data,false); local ver=b:readNumber("<I4"); local n=b:readNumber("<I4"); for i=1,n do b:read(16); shared[i]=basicTypes.String(b) end end
+    local classes={}; local nodes={}; local serviceRefs={}
+    for _,ch in ipairs(chunks.INST) do
+        local b=Buffer(ch.Data,false); local cid=b:readNumber("<I4"); local cname=basicTypes.String(b); local format=string.byte(b:read()); local n=b:readNumber("<I4"); local refs=basicTypes.RefArray(b,n)
+        classes[cid]={Name=cname,Count=n,Refs=refs,IsService=(format==1)}
+        local marks={}; if format==1 then for i=1,n do marks[i]=string.byte(b:read())~=0 end end
+        for i,ref in ipairs(refs) do nodes[ref]={Ref=ref,ClassId=cid,ClassName=cname,IsService=(format==1),Properties={},Children={},Service=marks[i] or false} end
+        if format==1 then for i,ref in ipairs(refs) do serviceRefs[ref]=true end end
+    end
+    for _,ch in ipairs(chunks.PROP) do
+        local b=Buffer(ch.Data,false); local cid=b:readNumber("<I4"); local cls=classes[cid]; if not cls then return nil,"PROP class id tidak ditemukan: "..cid end
+        local pname=basicTypes.String(b); local typeID=string.byte(b:read())
+        local vals=_decodePropertyArray(b,typeID,cls.Count,shared)
+        if vals then for i,ref in ipairs(cls.Refs) do if nodes[ref] then nodes[ref].Properties[pname]=vals[i] end end end
+    end
+    local childToParent={}
+    for _,ch in ipairs(chunks.PRNT) do local b=Buffer(ch.Data,false); local ver=string.byte(b:read()); if ver~=0 then return nil,"PRNT version tidak didukung" end; local n=b:readNumber("<I4"); local children=basicTypes.RefArray(b,n); local parents=basicTypes.RefArray(b,n); for i=1,n do childToParent[children[i]]=parents[i] end end
+    local roots={}
+    for ref,node in pairs(nodes) do
+        local p=childToParent[ref]
+        if p and p~=-1 and nodes[p] then table.insert(nodes[p].Children,node) else table.insert(roots,node) end
+    end
+    return {Header={ClassCount=classCount,InstanceCount=instCount},Nodes=nodes,Roots=roots,Services=serviceRefs,SharedStrings=shared}, nil
+end
+
+local function createRBXLInstances(parsed, sourceName)
+    local folder=Instance.new("Folder")
+    folder.Name=(sourceName or "RBXL") .. " [RBXL BETA]"
+    local made={}
+
+    -- A place contains service roots, but an imported file cannot recreate the
+    -- DataModel/services themselves. Keep the original service intent by
+    -- putting each service's children into a clearly named folder.
+    local SERVICE_GROUPS = {
+        Workspace="WS", ReplicatedStorage="RS", ReplicatedFirst="RF",
+        ServerStorage="SS", ServerScriptService="SSS", StarterGui="SG",
+        StarterPack="SP", StarterPlayer="StarterPlayer", Lighting="Lighting",
+        SoundService="SoundService", Teams="Teams", MaterialService="MaterialService",
+        PhysicsService="PhysicsService", CollectionService="CollectionService",
+        TextChatService="TextChatService", Chat="Chat", LocalizationService="LocalizationService",
+        TestService="TestService", VoiceChatService="VoiceChatService",
+        NetworkClient="NetworkClient", NetworkServer="NetworkServer"
+    }
+    local groups={}
+    local function getGroup(key)
+        if groups[key] then return groups[key] end
+        local g=Instance.new("Folder")
+        g.Name=key
+        g.Parent=folder
+        groups[key]=g
+        return g
+    end
+    local wsGroup=getGroup("WS")
+
+    local function safeSet(obj, property, value)
+        if value==nil then return false end
+        local ok=pcall(function() obj[property]=value end)
+        return ok
+    end
+
+    local function applyEnum(obj, property, enumType, value)
+        if value==nil then return end
+        pcall(function() obj[property]=enumType:FromValue(value) end)
+    end
+
+    local function applyProps(obj, props)
+        -- Canonical aliases used by the binary format. In particular, Part
+        -- uses lowercase "size" and "Color3uint8" in many RBXL files.
+        safeSet(obj,"Name",props.Name)
+        if obj:IsA("BasePart") then
+            safeSet(obj,"Anchored",props.Anchored)
+            safeSet(obj,"CanCollide",props.CanCollide)
+            safeSet(obj,"CanQuery",props.CanQuery)
+            safeSet(obj,"CanTouch",props.CanTouch)
+            safeSet(obj,"CastShadow",props.CastShadow)
+            safeSet(obj,"Massless",props.Massless)
+            safeSet(obj,"Locked",props.Locked)
+            safeSet(obj,"Size",props.Size or props.size)
+            safeSet(obj,"CFrame",props.CFrame)
+            safeSet(obj,"Color",props.Color or props.Color3uint8)
+            safeSet(obj,"Transparency",props.Transparency)
+            safeSet(obj,"Reflectance",props.Reflectance)
+            safeSet(obj,"CollisionGroup",props.CollisionGroup)
+            safeSet(obj,"MaterialVariant",props.MaterialVariant or props.MaterialVariantSerialized)
+            applyEnum(obj,"Material",Enum.Material,props.Material)
+            applyEnum(obj,"Shape",Enum.PartType,props.shape)
+            for _,side in ipairs({"Top","Bottom","Left","Right","Front","Back"}) do
+                applyEnum(obj,side.."Surface",Enum.SurfaceType,props[side.."Surface"])
+                applyEnum(obj,side.."SurfaceInput",Enum.InputType,props[side.."SurfaceInput"])
+            end
+            safeSet(obj,"Velocity",props.Velocity)
+            safeSet(obj,"RotVelocity",props.RotVelocity)
+        end
+
+        if obj:IsA("MeshPart") then
+            safeSet(obj,"MeshId",props.MeshId)
+            safeSet(obj,"TextureID",props.TextureID)
+        end
+        if obj:IsA("Sound") then
+            safeSet(obj,"SoundId",props.SoundId)
+            safeSet(obj,"Volume",props.Volume)
+            safeSet(obj,"PlaybackSpeed",props.PlaybackSpeed)
+            safeSet(obj,"Looped",props.Looped)
+            safeSet(obj,"Playing",props.Playing)
+            safeSet(obj,"TimePosition",props.TimePosition)
+            applyEnum(obj,"RollOffMode",Enum.RollOffMode,props.RollOffMode)
+        end
+        if obj:IsA("Animation") then safeSet(obj,"AnimationId",props.AnimationId) end
+        if obj:IsA("Tool") then
+            safeSet(obj,"TextureId",props.TextureId)
+            safeSet(obj,"ToolTip",props.ToolTip)
+            safeSet(obj,"CanBeDropped",props.CanBeDropped)
+            safeSet(obj,"Enabled",props.Enabled)
+            safeSet(obj,"RequiresHandle",props.RequiresHandle)
+        end
+        if obj:IsA("Script") or obj:IsA("LocalScript") or obj:IsA("ModuleScript") then
+            local source=props.Source or props.ContentText
+            if type(source)=="string" and #source>0 then
+                pcall(function() obj.Source=source end)
+                pcall(function() _G.Hyaz_RAW_SOURCES[obj]=source end)
+            end
+        end
+        -- Generic safe properties that are common across many classes.
+        safeSet(obj,"Archivable",props.Archivable)
+        safeSet(obj,"Enabled",props.Enabled)
+        safeSet(obj,"Visible",props.Visible)
+        safeSet(obj,"Text",props.Text)
+        safeSet(obj,"Image",props.Image)
+        safeSet(obj,"Texture",props.Texture)
+        safeSet(obj,"Value",props.Value)
+    end
+
+    local function makeNode(node)
+        if node.IsService or node.Service then return nil end
+        local ok,obj=pcall(Instance.new,node.ClassName)
+        if not ok or not obj then return nil end
+        made[node.Ref]=obj
+        applyProps(obj,node.Properties)
+        for _,child in ipairs(node.Children) do
+            local c=makeNode(child)
+            if c then c.Parent=obj end
+        end
+        return obj
+    end
+
+    local function importChildren(root, parent)
+        for _,child in ipairs(root.Children) do
+            local obj=makeNode(child)
+            if obj then obj.Parent=parent end
+        end
+    end
+
+    -- Preserve service grouping while still keeping everything under the
+    -- single import folder. Non-service roots are treated as Workspace.
+    for _,root in ipairs(parsed.Roots) do
+        if root.IsService or root.Service then
+            local key=SERVICE_GROUPS[root.ClassName] or root.ClassName
+            importChildren(root,getGroup(key))
+        else
+            local obj=makeNode(root)
+            if obj then obj.Parent=wsGroup end
+        end
+    end
+
+    return folder, made
+end
+
+
+
+-- ============================================================
+-- FILE SYSTEM
+-- ============================================================
+local function safeReadFile(path)
+    if type(readfile) ~= "function" then return nil, "readfile tidak tersedia" end
+    local ok, data = pcall(readfile, path)
+    if not ok or type(data) ~= "string" or #data == 0 then
+        return nil, "readfile gagal"
+    end
+    return data
+end
+
+local function isRBXL(path)
+    return type(path) == "string" and path:lower():match("%.rbxl$") ~= nil
+end
+
+local function collectRBXL()
+    local result, seen = {}, {}
+    local roots = {
+        "workspace",
+        "Workspace",
+        "Delta/workspace",
+        "delta/workspace",
+        "Android/Delta/workspace",
+    }
+
+    local function add(path)
+        if #result >= CONFIG.MaxFiles then return end
+        if not isRBXL(path) or seen[path] then return end
+        seen[path] = true
+        result[#result + 1] = path
+    end
+
+    local function walk(path, depth)
+        if #result >= CONFIG.MaxFiles or depth > 6 or type(listfiles) ~= "function" then return end
+        local ok, entries = pcall(listfiles, path)
+        if not ok or type(entries) ~= "table" then return end
+        for _, entry in ipairs(entries) do
+            if #result >= CONFIG.MaxFiles then break end
+            local lower = tostring(entry):lower()
+            if lower:match("%.rbxl$") then
+                add(entry)
+            elseif type(isfolder) == "function" then
+                local fok, folder = pcall(isfolder, entry)
+                if fok and folder then walk(entry, depth + 1) end
+            end
+        end
+    end
+
+    for _, root in ipairs(roots) do
+        walk(root, 0)
+    end
+    return result
+end
+
+-- ============================================================
+-- IMPORT
+-- ============================================================
+local function importRBXL(path)
+    local data, readErr = safeReadFile(path)
+    if not data then return false, readErr end
+
+    local ok, parsed, err = pcall(parseRBXLBinary, data)
+    if not ok then
+        return false, "Parser crash: " .. tostring(parsed)
+    end
+    if not parsed then
+        return false, tostring(err or "RBXL parser gagal")
+    end
+
+    local sourceName = path:match("([^/\\]+)$") or "RBXL"
+    sourceName = sourceName:gsub("%.rbxl$", "")
+
+    local buildOK, folder, made = pcall(function()
+        return createRBXLInstances(parsed, sourceName)
+    end)
+    if not buildOK or not folder then
+        return false, "Instance builder gagal: " .. tostring(folder)
+    end
+
+    folder.Parent = workspace
+    local count = #folder:GetDescendants()
+    return true, string.format("%s object(s) imported | %d class | %d instance", count, parsed.Header.ClassCount, parsed.Header.InstanceCount)
+end
+
+-- ============================================================
+-- COMPACT TEST UI
+-- ============================================================
+local old = GuiParent:FindFirstChild("HYAZ_RBXL_IMPORTER_V10")
+if old then old:Destroy() end
+
+local gui = Instance.new("ScreenGui")
+gui.Name = "HYAZ_RBXL_IMPORTER_V10"
+gui.ResetOnSpawn = false
+gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+gui.Parent = GuiParent
+
+local main = Instance.new("Frame")
+main.Size = UDim2.fromOffset(430, 430)
+main.Position = UDim2.new(0.5, -215, 0.5, -215)
+main.BackgroundColor3 = Color3.fromRGB(12, 15, 22)
+main.BorderSizePixel = 0
+main.Parent = gui
+Instance.new("UICorner", main).CornerRadius = UDim.new(0, 12)
+local mainStroke = Instance.new("UIStroke", main)
+mainStroke.Color = Color3.fromRGB(92, 20, 35)
+mainStroke.Thickness = 1.2
+
+local title = Instance.new("TextLabel")
+title.Size = UDim2.new(1, -30, 0, 38)
+title.Position = UDim2.fromOffset(15, 8)
+title.BackgroundTransparency = 1
+title.Text = "HYAZ RBXL IMPORTER"
+title.TextColor3 = Color3.fromRGB(245, 245, 250)
+title.Font = Enum.Font.GothamBold
+title.TextSize = 16
+title.TextXAlignment = Enum.TextXAlignment.Left
+title.Parent = main
+
+local version = Instance.new("TextLabel")
+version.Size = UDim2.new(1, -30, 0, 18)
+version.Position = UDim2.fromOffset(15, 39)
+version.BackgroundTransparency = 1
+version.Text = "V1.0 • RBXL BINARY ENGINE"
+version.TextColor3 = Color3.fromRGB(145, 150, 165)
+version.Font = Enum.Font.Gotham
+version.TextSize = 9
+version.TextXAlignment = Enum.TextXAlignment.Left
+version.Parent = main
+
+local scan = Instance.new("TextButton")
+scan.Size = UDim2.fromOffset(125, 34)
+scan.Position = UDim2.new(1, -140, 0, 18)
+scan.BackgroundColor3 = Color3.fromRGB(105, 20, 35)
+scan.BorderSizePixel = 0
+scan.Text = CONFIG.ScanLabel
+scan.TextColor3 = Color3.fromRGB(255, 240, 242)
+scan.Font = Enum.Font.GothamBold
+scan.TextSize = 10
+scan.Parent = main
+Instance.new("UICorner", scan).CornerRadius = UDim.new(0, 8)
+
+local status = Instance.new("TextLabel")
+status.Size = UDim2.new(1, -30, 0, 25)
+status.Position = UDim2.fromOffset(15, 70)
+status.BackgroundTransparency = 1
+status.Text = "Ready • tekan SCAN RBXL"
+status.TextColor3 = Color3.fromRGB(105, 220, 145)
+status.Font = Enum.Font.Gotham
+status.TextSize = 9
+status.TextXAlignment = Enum.TextXAlignment.Left
+status.Parent = main
+
+local list = Instance.new("ScrollingFrame")
+list.Size = UDim2.new(1, -30, 1, -112)
+list.Position = UDim2.fromOffset(15, 102)
+list.BackgroundColor3 = Color3.fromRGB(8, 10, 15)
+list.BorderSizePixel = 0
+list.ScrollBarThickness = 4
+list.AutomaticCanvasSize = Enum.AutomaticSize.Y
+list.CanvasSize = UDim2.new()
+list.Parent = main
+Instance.new("UICorner", list).CornerRadius = UDim.new(0, 9)
+local pad = Instance.new("UIPadding", list)
+pad.PaddingTop = UDim.new(0, 8)
+pad.PaddingLeft = UDim.new(0, 8)
+pad.PaddingRight = UDim.new(0, 8)
+pad.PaddingBottom = UDim.new(0, 8)
+local layout = Instance.new("UIListLayout", list)
+layout.Padding = UDim.new(0, 7)
+
+local function clearList()
+    for _, child in ipairs(list:GetChildren()) do
+        if child:IsA("Frame") then child:Destroy() end
+    end
+end
+
+local function addFileRow(path)
+    local row = Instance.new("Frame")
+    row.Size = UDim2.new(1, -4, 0, 58)
+    row.BackgroundColor3 = Color3.fromRGB(18, 22, 31)
+    row.BorderSizePixel = 0
+    row.Parent = list
+    Instance.new("UICorner", row).CornerRadius = UDim.new(0, 8)
+
+    local name = Instance.new("TextLabel")
+    name.Size = UDim2.new(1, -105, 0, 21)
+    name.Position = UDim2.fromOffset(10, 6)
+    name.BackgroundTransparency = 1
+    name.Text = path:match("([^/\\]+)$") or path
+    name.TextColor3 = Color3.fromRGB(240, 242, 248)
+    name.Font = Enum.Font.GothamBold
+    name.TextSize = 10
+    name.TextXAlignment = Enum.TextXAlignment.Left
+    name.TextTruncate = Enum.TextTruncate.AtEnd
+    name.Parent = row
+
+    local pathText = Instance.new("TextLabel")
+    pathText.Size = UDim2.new(1, -105, 0, 18)
+    pathText.Position = UDim2.fromOffset(10, 28)
+    pathText.BackgroundTransparency = 1
+    pathText.Text = path
+    pathText.TextColor3 = Color3.fromRGB(120, 125, 140)
+    pathText.Font = Enum.Font.Gotham
+    pathText.TextSize = 8
+    pathText.TextXAlignment = Enum.TextXAlignment.Left
+    pathText.TextTruncate = Enum.TextTruncate.AtEnd
+    pathText.Parent = row
+
+    local insert = Instance.new("TextButton")
+    insert.Size = UDim2.fromOffset(78, 32)
+    insert.Position = UDim2.new(1, -88, 0.5, -16)
+    insert.BackgroundColor3 = Color3.fromRGB(34, 56, 88)
+    insert.BorderSizePixel = 0
+    insert.Text = "IMPORT"
+    insert.TextColor3 = Color3.fromRGB(225, 235, 255)
+    insert.Font = Enum.Font.GothamBold
+    insert.TextSize = 9
+    insert.Parent = row
+    Instance.new("UICorner", insert).CornerRadius = UDim.new(0, 7)
+
+    insert.MouseButton1Click:Connect(function()
+        insert.Text = "LOADING"
+        task.spawn(function()
+            local ok, msg = importRBXL(path)
+            if ok then
+                insert.Text = "DONE"
+                insert.BackgroundColor3 = Color3.fromRGB(38, 104, 70)
+                status.Text = "READY • " .. msg
+            else
+                insert.Text = "FAIL"
+                insert.BackgroundColor3 = Color3.fromRGB(105, 35, 45)
+                status.Text = "ERROR • " .. tostring(msg)
+            end
+            task.wait(1.5)
+            insert.Text = "IMPORT"
+            insert.BackgroundColor3 = Color3.fromRGB(34, 56, 88)
+        end)
+    end)
+end
+
+local function scanFiles()
+    clearList()
+    status.Text = "Scanning RBXL..."
+    local files = collectRBXL()
+    if #files == 0 then
+        status.Text = "Tidak ada .rbxl ditemukan"
+        return
+    end
+    for _, path in ipairs(files) do addFileRow(path) end
+    status.Text = string.format("Ready • %d RBXL ditemukan", #files)
+end
+
+scan.MouseButton1Click:Connect(scanFiles)
+scanFiles()
+
+-- Expose engine for the main HYAZ UI later without duplicating the parser.
+_G.HYAZ_RBXL_IMPORTER = {
+    Version = "V1.0",
+    Parse = parseRBXLBinary,
+    Import = importRBXL,
+    Scan = collectRBXL,
+}
+
+print("[HYAZ RBXL IMPORTER V1.0] READY")
