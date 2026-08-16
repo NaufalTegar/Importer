@@ -1980,32 +1980,149 @@ ScanClick.MouseButton1Click:Connect(function()
 end)
 
 -- MINIMIZE / CLOSE
+-- Minimize uses a separate floating capsule instead of resizing Main.
+-- This prevents the header controls from being clipped and keeps HYAZ
+-- immediately recoverable on mobile and desktop executors.
+
+local MinimizedBar = Instance.new("Frame", UI)
+MinimizedBar.Name = "HYAZ_MinimizedBar"
+MinimizedBar.Size = UDim2.new(0, 218, 0, 46)
+MinimizedBar.Position = Main.Position
+MinimizedBar.BackgroundColor3 = Theme.panel2
+MinimizedBar.BorderSizePixel = 0
+MinimizedBar.Visible = false
+MinimizedBar.Active = true
+MinimizedBar.ZIndex = 50
+round(MinimizedBar, 13)
+stroke(MinimizedBar, Theme.accentDark, 1, 0.08)
+
+local MinBarGradient = Instance.new("UIGradient", MinimizedBar)
+MinBarGradient.Color = ColorSequence.new({
+    ColorSequenceKeypoint.new(0, Color3.fromRGB(27, 12, 19)),
+    ColorSequenceKeypoint.new(0.55, Color3.fromRGB(13, 14, 20)),
+    ColorSequenceKeypoint.new(1, Color3.fromRGB(24, 10, 16))
+})
+MinBarGradient.Rotation = 20
+registerGradientAnimation(MinBarGradient, 10, "rotate")
+
+local MinBarAccent = Instance.new("Frame", MinimizedBar)
+MinBarAccent.Size = UDim2.new(0, 3, 1, -16)
+MinBarAccent.Position = UDim2.new(0, 7, 0, 8)
+MinBarAccent.BackgroundColor3 = Theme.accent
+MinBarAccent.BorderSizePixel = 0
+MinBarAccent.ZIndex = 51
+round(MinBarAccent, 2)
+
+local MinBarTitle = Instance.new("TextLabel", MinimizedBar)
+MinBarTitle.Size = UDim2.new(0, 74, 0, 18)
+MinBarTitle.Position = UDim2.new(0, 18, 0, 7)
+MinBarTitle.BackgroundTransparency = 1
+MinBarTitle.Text = "HYAZ"
+MinBarTitle.TextColor3 = Theme.text
+MinBarTitle.Font = Enum.Font.GothamBold
+MinBarTitle.TextSize = 12
+MinBarTitle.TextXAlignment = Enum.TextXAlignment.Left
+MinBarTitle.ZIndex = 51
+
+local MinBarStatus = Instance.new("TextLabel", MinimizedBar)
+MinBarStatus.Size = UDim2.new(0, 110, 0, 13)
+MinBarStatus.Position = UDim2.new(0, 18, 0, 25)
+MinBarStatus.BackgroundTransparency = 1
+MinBarStatus.Text = "TOOLKIT  •  MINIMIZED"
+MinBarStatus.TextColor3 = Theme.muted
+MinBarStatus.Font = Enum.Font.GothamMedium
+MinBarStatus.TextSize = 7
+MinBarStatus.TextXAlignment = Enum.TextXAlignment.Left
+MinBarStatus.ZIndex = 51
+
+local MinBarRestore = Instance.new("Frame", MinimizedBar)
+MinBarRestore.Size = UDim2.new(0, 30, 0, 30)
+MinBarRestore.Position = UDim2.new(1, -39, 0.5, -15)
+MinBarRestore.BackgroundColor3 = Color3.fromRGB(52, 14, 22)
+MinBarRestore.BorderSizePixel = 0
+MinBarRestore.ZIndex = 51
+round(MinBarRestore, 9)
+stroke(MinBarRestore, Theme.accentDark, 1, 0.15)
+
+local MinBarRestoreIcon = Instance.new("ImageLabel", MinBarRestore)
+MinBarRestoreIcon.Size = UDim2.new(0, 14, 0, 14)
+MinBarRestoreIcon.Position = UDim2.new(0.5, -7, 0.5, -7)
+MinBarRestoreIcon.BackgroundTransparency = 1
+MinBarRestoreIcon.Image = ICONS.CHEVRON_RIGHT
+MinBarRestoreIcon.ImageColor3 = Theme.accentSoft
+MinBarRestoreIcon.ZIndex = 52
+
+local MinBarRestoreClick = Instance.new("TextButton", MinBarRestore)
+MinBarRestoreClick.Size = UDim2.new(1, 0, 1, 0)
+MinBarRestoreClick.BackgroundTransparency = 1
+MinBarRestoreClick.Text = ""
+MinBarRestoreClick.ZIndex = 53
+
+addHover(MinBarRestoreClick, MinBarRestore, Color3.fromRGB(52, 14, 22), Color3.fromRGB(86, 20, 31))
+
+-- Dragging for minimized capsule.
+do
+    local dragging = false
+    local dragStart
+    local startPos
+    MinimizedBar.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            dragging = true
+            dragStart = input.Position
+            startPos = MinimizedBar.Position
+        end
+    end)
+    UserInputService.InputChanged:Connect(function(input)
+        if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+            local delta = input.Position - dragStart
+            MinimizedBar.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+        end
+    end)
+    UserInputService.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            dragging = false
+        end
+    end)
+end
+
+local minimized = false
+local expandedSize = Main.Size
+local expandedPosition = Main.Position
+
 CloseClick.MouseButton1Click:Connect(function()
     if Main.Visible then
         toggleMain()
     end
 end)
 
-local minimized = false
-local expandedSize = Main.Size
-MinClick.MouseButton1Click:Connect(function()
-    minimized = not minimized
+local function setMinimized(state)
+    minimized = state
     if minimized then
         expandedSize = Main.Size
-        Body.Visible = false
-        Main.Size = UDim2.new(0, 250, 0, 52)
-        TitleText.Text = "HYAZ"
-        Subtitle.Text = "TOOLKIT  •  MINIMIZED"
-        StatusWrap.Visible = false
-        CloseBtn.Position = UDim2.new(1, -38, 0.5, -14)
-        MinBtn.Position = UDim2.new(1, -74, 0.5, -14)
+        expandedPosition = Main.Position
+        MinimizedBar.Position = Main.Position
+        Main.Visible = false
+        MinimizedBar.Visible = true
+        ToggleFrame.Visible = false
+        ToggleIcon.Image = ICONS.CHEVRON_RIGHT
     else
-        Body.Visible = true
+        Main.Position = expandedPosition
         Main.Size = expandedSize
-        TitleText.Text = "HYAZ"
-        Subtitle.Text = "UNIVERSAL TOOLKIT  •  READY"
-        StatusWrap.Visible = true
+        Main.Visible = true
+        MinimizedBar.Visible = false
+        ToggleFrame.Visible = true
+        ToggleIcon.Image = ICONS.CHEVRON_RIGHT
     end
+end
+
+MinClick.MouseButton1Click:Connect(function()
+    setMinimized(true)
+end)
+
+MinBarRestoreClick.MouseButton1Click:Connect(function()
+    -- Restore at the capsule's current position.
+    expandedPosition = MinimizedBar.Position
+    setMinimized(false)
 end)
 
 
