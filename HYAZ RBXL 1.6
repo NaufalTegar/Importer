@@ -1108,269 +1108,466 @@ local function importRBXL(path)
 end
 
 -- ============================================================
--- COMPACT TEST UI
 -- ============================================================
-local old = GuiParent:FindFirstChild("HYAZ_RBXL_IMPORTER_V12")
-if old then old:Destroy() end
+-- RBXM-STYLE UI / V1.6
+-- UI only: parser/import engine above remains unchanged.
+-- ============================================================
+local UserInputService = game:GetService("UserInputService")
+
+local oldNames = {"HYAZ_RBXL_IMPORTER_V14", "HYAZ_RBXL_IMPORTER_V15", "HYAZ_RBXL_IMPORTER_V16"}
+for _, n in ipairs(oldNames) do
+    local old = GuiParent:FindFirstChild(n)
+    if old then old:Destroy() end
+end
 
 local gui = Instance.new("ScreenGui")
-gui.Name = "HYAZ_RBXL_IMPORTER_V14"
+gui.Name = "HYAZ_RBXL_IMPORTER_V16"
 gui.ResetOnSpawn = false
 gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 gui.Parent = GuiParent
 
-local main = Instance.new("Frame")
-main.Size = UDim2.new(0, 460, 0, 440)
-main.Position = UDim2.new(0.5, -230, 0.5, -220)
-main.BackgroundColor3 = Color3.fromRGB(12, 15, 22)
-main.BorderSizePixel = 0
-main.ClipsDescendants = true
-main.Parent = gui
-Instance.new("UICorner", main).CornerRadius = UDim.new(0, 12)
-local mainStroke = Instance.new("UIStroke", main)
-mainStroke.Color = Color3.fromRGB(92, 20, 35)
-mainStroke.Thickness = 1.2
+local Theme = {
+    bg = Color3.fromRGB(8, 10, 15),
+    panel = Color3.fromRGB(13, 16, 23),
+    panel2 = Color3.fromRGB(17, 20, 29),
+    panel3 = Color3.fromRGB(24, 28, 39),
+    border = Color3.fromRGB(50, 43, 52),
+    accent = Color3.fromRGB(190, 28, 52),
+    accentDark = Color3.fromRGB(105, 18, 34),
+    accentSoft = Color3.fromRGB(255, 105, 125),
+    text = Color3.fromRGB(242, 244, 249),
+    muted = Color3.fromRGB(135, 141, 155),
+    success = Color3.fromRGB(74, 205, 133),
+    danger = Color3.fromRGB(235, 72, 88),
+    blue = Color3.fromRGB(54, 88, 145),
+}
 
--- Window controls: draggable on mouse/touch and minimizable.
-local UserInputService = game:GetService("UserInputService")
-local minimized = false
-local normalSize = UDim2.new(0, 460, 0, 440)
-local miniSize = UDim2.new(0, 460, 0, 58)
-
-local dragBar = Instance.new("Frame")
-dragBar.Size = UDim2.new(1, -105, 0, 58)
-dragBar.Position = UDim2.fromOffset(0, 0)
-dragBar.BackgroundTransparency = 1
-dragBar.Active = true
-dragBar.Parent = main
-
-local minimize = Instance.new("TextButton")
-minimize.Size = UDim2.fromOffset(34, 30)
-minimize.Position = UDim2.new(1, -78, 0, 14)
-minimize.BackgroundColor3 = Color3.fromRGB(30, 35, 48)
-minimize.BorderSizePixel = 0
-minimize.Text = "—"
-minimize.TextColor3 = Color3.fromRGB(225, 230, 240)
-minimize.Font = Enum.Font.GothamBold
-minimize.TextSize = 16
-minimize.Parent = main
-Instance.new("UICorner", minimize).CornerRadius = UDim.new(0, 8)
-
-local close = Instance.new("TextButton")
-close.Size = UDim2.fromOffset(34, 30)
-close.Position = UDim2.new(1, -38, 0, 14)
-close.BackgroundColor3 = Color3.fromRGB(105, 20, 35)
-close.BorderSizePixel = 0
-close.Text = "×"
-close.TextColor3 = Color3.fromRGB(255, 235, 238)
-close.Font = Enum.Font.GothamBold
-close.TextSize = 17
-close.Parent = main
-Instance.new("UICorner", close).CornerRadius = UDim.new(0, 8)
-
-local function setMinimized(state)
-    minimized = state
-    if minimized then
-        main.Size = miniSize
-        minimize.Text = "+"
-    else
-        main.Size = normalSize
-        minimize.Text = "—"
-    end
+local function round(obj, radius)
+    local c = Instance.new("UICorner")
+    c.CornerRadius = UDim.new(0, radius or 10)
+    c.Parent = obj
+    return c
 end
 
-minimize.MouseButton1Click:Connect(function()
-    setMinimized(not minimized)
+local function stroke(obj, color, thickness, transparency)
+    local s = Instance.new("UIStroke")
+    s.Color = color
+    s.Thickness = thickness or 1
+    s.Transparency = transparency or 0
+    s.Parent = obj
+    return s
+end
+
+local function makeLabel(parent, text, size, pos, font, textSize, color)
+    local l = Instance.new("TextLabel")
+    l.BackgroundTransparency = 1
+    l.Size = size
+    l.Position = pos
+    l.Text = text
+    l.Font = font or Enum.Font.Gotham
+    l.TextSize = textSize or 9
+    l.TextColor3 = color or Theme.text
+    l.TextXAlignment = Enum.TextXAlignment.Left
+    l.TextYAlignment = Enum.TextYAlignment.Center
+    l.Parent = parent
+    return l
+end
+
+local Main = Instance.new("Frame")
+Main.Name = "MainFrame"
+Main.Size = UDim2.fromOffset(430, 500)
+Main.Position = UDim2.new(0.5, -215, 0.5, -250)
+Main.BackgroundColor3 = Theme.bg
+Main.BorderSizePixel = 0
+Main.ClipsDescendants = true
+Main.Parent = gui
+round(Main, 16)
+stroke(Main, Theme.accentDark, 1, 0.08)
+
+-- Header: draggable area is separated from buttons so controls never steal drag input.
+local Header = Instance.new("Frame")
+Header.Name = "Header"
+Header.Size = UDim2.new(1, 0, 0, 62)
+Header.BackgroundColor3 = Theme.panel2
+Header.BorderSizePixel = 0
+Header.Active = true
+Header.Parent = Main
+
+local HeaderLine = Instance.new("Frame")
+HeaderLine.Size = UDim2.new(1, 0, 0, 1)
+HeaderLine.Position = UDim2.new(0, 0, 1, -1)
+HeaderLine.BackgroundColor3 = Theme.border
+HeaderLine.BorderSizePixel = 0
+HeaderLine.Parent = Header
+
+local IconBox = Instance.new("Frame")
+IconBox.Size = UDim2.fromOffset(36, 36)
+IconBox.Position = UDim2.fromOffset(11, 13)
+IconBox.BackgroundColor3 = Color3.fromRGB(45, 12, 20)
+IconBox.BorderSizePixel = 0
+IconBox.Parent = Header
+round(IconBox, 10)
+stroke(IconBox, Theme.accent, 1, 0.35)
+local IconText = makeLabel(IconBox, "RB", UDim2.fromScale(1,1), UDim2.fromOffset(0,0), Enum.Font.GothamBold, 11, Theme.accentSoft)
+IconText.TextXAlignment = Enum.TextXAlignment.Center
+
+makeLabel(Header, "HYAZ RBXL IMPORTER", UDim2.fromOffset(190,20), UDim2.fromOffset(57,7), Enum.Font.GothamBold, 13, Theme.text)
+local Badge = Instance.new("Frame")
+Badge.Size = UDim2.fromOffset(42,18)
+Badge.Position = UDim2.fromOffset(57,34)
+Badge.BackgroundColor3 = Color3.fromRGB(45,12,19)
+Badge.BorderSizePixel = 0
+Badge.Parent = Header
+round(Badge,8)
+stroke(Badge,Theme.accentDark,1,0.25)
+local BadgeText = makeLabel(Badge,"V1.6",UDim2.fromScale(1,1),UDim2.fromOffset(0,0),Enum.Font.GothamBold,8,Theme.accentSoft)
+BadgeText.TextXAlignment = Enum.TextXAlignment.Center
+makeLabel(Header,"RBXL BINARY  •  DELTA WORKSPACE",UDim2.fromOffset(175,14),UDim2.fromOffset(105,36),Enum.Font.GothamMedium,7,Theme.muted)
+
+local StatusWrap = Instance.new("Frame")
+StatusWrap.Size = UDim2.fromOffset(66,26)
+StatusWrap.Position = UDim2.new(1,-160,0.5,-13)
+StatusWrap.BackgroundColor3 = Color3.fromRGB(24,14,18)
+StatusWrap.BorderSizePixel = 0
+StatusWrap.Parent = Header
+round(StatusWrap,8)
+stroke(StatusWrap,Theme.border,1,0.2)
+local Dot = Instance.new("Frame")
+Dot.Size = UDim2.fromOffset(6,6)
+Dot.Position = UDim2.fromOffset(8,10)
+Dot.BackgroundColor3 = Theme.success
+Dot.BorderSizePixel = 0
+Dot.Parent = StatusWrap
+round(Dot,3)
+local StatusText = makeLabel(StatusWrap,"READY",UDim2.new(1,-20,1,0),UDim2.fromOffset(18,0),Enum.Font.GothamBold,8,Theme.success)
+
+local MinBtn = Instance.new("TextButton")
+MinBtn.Size = UDim2.fromOffset(28,28)
+MinBtn.Position = UDim2.new(1,-86,0.5,-14)
+MinBtn.BackgroundColor3 = Theme.panel3
+MinBtn.BorderSizePixel = 0
+MinBtn.Text = "—"
+MinBtn.TextColor3 = Theme.accentSoft
+MinBtn.Font = Enum.Font.GothamBold
+MinBtn.TextSize = 16
+MinBtn.Parent = Header
+round(MinBtn,8)
+stroke(MinBtn,Theme.border,1,0.2)
+
+local CloseBtn = Instance.new("TextButton")
+CloseBtn.Size = UDim2.fromOffset(28,28)
+CloseBtn.Position = UDim2.new(1,-48,0.5,-14)
+CloseBtn.BackgroundColor3 = Color3.fromRGB(42,12,18)
+CloseBtn.BorderSizePixel = 0
+CloseBtn.Text = "×"
+CloseBtn.TextColor3 = Theme.accentSoft
+CloseBtn.Font = Enum.Font.GothamBold
+CloseBtn.TextSize = 18
+CloseBtn.Parent = Header
+round(CloseBtn,8)
+stroke(CloseBtn,Theme.accentDark,1,0.2)
+
+local minimized = false
+local normalSize = Main.Size
+MinBtn.Activated:Connect(function()
+    minimized = not minimized
+    Main.Size = minimized and UDim2.fromOffset(430,62) or normalSize
+    MinBtn.Text = minimized and "+" or "—"
 end)
+CloseBtn.Activated:Connect(function() gui:Destroy() end)
 
-close.MouseButton1Click:Connect(function()
-    gui:Destroy()
-end)
+-- Header drag handle: the handle stops before the window controls, so buttons never drag the window.
+local DragArea = Instance.new("Frame")
+DragArea.Name = "DragArea"
+DragArea.Size = UDim2.new(1,-165,1,0)
+DragArea.Position = UDim2.fromOffset(0,0)
+DragArea.BackgroundTransparency = 1
+DragArea.Active = true
+DragArea.Parent = Header
 
-local dragging = false
-local dragStart, startPos
+do
+    local dragging = false
+    local dragStart
+    local startPos
+    DragArea.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            dragging = true
+            dragStart = input.Position
+            startPos = Main.Position
+        end
+    end)
+    UserInputService.InputChanged:Connect(function(input)
+        if not dragging then return end
+        if input.UserInputType ~= Enum.UserInputType.MouseMovement and input.UserInputType ~= Enum.UserInputType.Touch then return end
+        local delta = input.Position - dragStart
+        Main.Position = UDim2.new(startPos.X.Scale,startPos.X.Offset+delta.X,startPos.Y.Scale,startPos.Y.Offset+delta.Y)
+    end)
+    UserInputService.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then dragging = false end
+    end)
+end
 
-dragBar.InputBegan:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.MouseButton1
-        or input.UserInputType == Enum.UserInputType.Touch then
-        dragging = true
-        dragStart = input.Position
-        startPos = main.Position
+-- Content area
+local Content = Instance.new("Frame")
+Content.Name = "Content"
+Content.Size = UDim2.new(1,-20,1,-72)
+Content.Position = UDim2.fromOffset(10,67)
+Content.BackgroundTransparency = 1
+Content.Parent = Main
 
-        input.Changed:Connect(function()
-            if input.UserInputState == Enum.UserInputState.End then
-                dragging = false
-            end
-        end)
-    end
-end)
+local Search = Instance.new("TextBox")
+Search.Name = "Search"
+Search.Size = UDim2.new(1,-128,0,36)
+Search.Position = UDim2.fromOffset(0,0)
+Search.BackgroundColor3 = Theme.panel3
+Search.BorderSizePixel = 0
+Search.ClearTextOnFocus = false
+Search.PlaceholderText = "Search RBXL files..."
+Search.PlaceholderColor3 = Theme.muted
+Search.Text = ""
+Search.TextColor3 = Theme.text
+Search.Font = Enum.Font.Gotham
+Search.TextSize = 9
+Search.TextXAlignment = Enum.TextXAlignment.Left
+Search.Parent = Content
+round(Search,9)
+stroke(Search,Theme.border,1,0.25)
+local SearchPad = Instance.new("UIPadding",Search)
+SearchPad.PaddingLeft = UDim.new(0,12)
+SearchPad.PaddingRight = UDim.new(0,8)
 
-UserInputService.InputChanged:Connect(function(input)
-    if not dragging then return end
-    if input.UserInputType ~= Enum.UserInputType.MouseMovement
-        and input.UserInputType ~= Enum.UserInputType.Touch then return end
+local Scan = Instance.new("TextButton")
+Scan.Name = "Scan"
+Scan.Size = UDim2.fromOffset(118,36)
+Scan.Position = UDim2.new(1,-118,0,0)
+Scan.BackgroundColor3 = Theme.accentDark
+Scan.BorderSizePixel = 0
+Scan.Text = "SCAN RBXL"
+Scan.TextColor3 = Color3.fromRGB(255,240,242)
+Scan.Font = Enum.Font.GothamBold
+Scan.TextSize = 9
+Scan.Parent = Content
+round(Scan,9)
+stroke(Scan,Theme.accent,1,0.35)
 
-    local delta = input.Position - dragStart
-    main.Position = UDim2.new(
-        startPos.X.Scale, startPos.X.Offset + delta.X,
-        startPos.Y.Scale, startPos.Y.Offset + delta.Y
-    )
-end)
+local Section = makeLabel(Content,"WORKSPACE FILES",UDim2.new(1,0,0,18),UDim2.fromOffset(0,44),Enum.Font.GothamBold,8,Theme.muted)
 
-local title = Instance.new("TextLabel")
-title.Size = UDim2.new(1, -125, 0, 38)
-title.Position = UDim2.fromOffset(15, 8)
-title.BackgroundTransparency = 1
-title.Text = "HYAZ RBXL IMPORTER"
-title.TextColor3 = Color3.fromRGB(245, 245, 250)
-title.Font = Enum.Font.GothamBold
-title.TextSize = 16
-title.TextXAlignment = Enum.TextXAlignment.Left
-title.Parent = main
+local List = Instance.new("ScrollingFrame")
+List.Name = "FileList"
+List.Size = UDim2.new(1,0,1,-112)
+List.Position = UDim2.fromOffset(0,68)
+List.BackgroundColor3 = Theme.bg
+List.BorderSizePixel = 0
+List.ScrollBarThickness = 3
+List.ScrollBarImageColor3 = Theme.accent
+List.ScrollBarImageTransparency = 0.25
+List.AutomaticCanvasSize = Enum.AutomaticSize.Y
+List.CanvasSize = UDim2.new(0,0,0,0)
+List.ScrollingDirection = Enum.ScrollingDirection.Y
+List.Parent = Content
+round(List,10)
+stroke(List,Theme.border,1,0.2)
+local ListPad = Instance.new("UIPadding",List)
+ListPad.PaddingTop = UDim.new(0,8)
+ListPad.PaddingBottom = UDim.new(0,8)
+ListPad.PaddingLeft = UDim.new(0,8)
+ListPad.PaddingRight = UDim.new(0,8)
+local Layout = Instance.new("UIListLayout",List)
+Layout.Padding = UDim.new(0,7)
+Layout.SortOrder = Enum.SortOrder.LayoutOrder
 
-local version = Instance.new("TextLabel")
-version.Size = UDim2.new(1, -125, 0, 18)
-version.Position = UDim2.fromOffset(15, 39)
-version.BackgroundTransparency = 1
-version.Text = "V1.4 • PROP ENGINE • DELTA WORKSPACE"
-version.TextColor3 = Color3.fromRGB(145, 150, 165)
-version.Font = Enum.Font.Gotham
-version.TextSize = 9
-version.TextXAlignment = Enum.TextXAlignment.Left
-version.Parent = main
+local Empty = Instance.new("Frame")
+Empty.Name = "EmptyState"
+Empty.Size = UDim2.new(1,-6,0,130)
+Empty.BackgroundTransparency = 1
+Empty.Parent = List
+local EmptyIcon = makeLabel(Empty,"RBXL",UDim2.fromOffset(58,34),UDim2.new(0.5,-29,0,20),Enum.Font.GothamBold,10,Theme.accentSoft)
+EmptyIcon.TextXAlignment = Enum.TextXAlignment.Center
+EmptyIcon.BackgroundColor3 = Color3.fromRGB(30,14,19)
+EmptyIcon.BackgroundTransparency = 0
+round(EmptyIcon,10)
+stroke(EmptyIcon,Theme.border,1,0.2)
+local EmptyLabel = makeLabel(Empty,"No files detected yet.\nPress SCAN RBXL to search.",UDim2.new(1,-20,0,42),UDim2.fromOffset(10,66),Enum.Font.Gotham,8,Theme.muted)
+EmptyLabel.TextWrapped = true
+EmptyLabel.TextXAlignment = Enum.TextXAlignment.Center
 
-local scan = Instance.new("TextButton")
-scan.Size = UDim2.fromOffset(118, 34)
-scan.Position = UDim2.new(1, -205, 0, 14)
-scan.BackgroundColor3 = Color3.fromRGB(105, 20, 35)
-scan.BorderSizePixel = 0
-scan.Text = CONFIG.ScanLabel
-scan.TextColor3 = Color3.fromRGB(255, 240, 242)
-scan.Font = Enum.Font.GothamBold
-scan.TextSize = 10
-scan.Parent = main
-Instance.new("UICorner", scan).CornerRadius = UDim.new(0, 8)
+local Footer = Instance.new("Frame")
+Footer.Name = "Footer"
+Footer.Size = UDim2.new(1,0,0,36)
+Footer.Position = UDim2.new(0,0,1,-36)
+Footer.BackgroundColor3 = Theme.panel2
+Footer.BorderSizePixel = 0
+Footer.Parent = Content
+round(Footer,9)
+stroke(Footer,Theme.border,1,0.25)
+local FooterDot = Instance.new("Frame")
+FooterDot.Size = UDim2.fromOffset(7,7)
+FooterDot.Position = UDim2.fromOffset(11,14)
+FooterDot.BackgroundColor3 = Theme.success
+FooterDot.BorderSizePixel = 0
+FooterDot.Parent = Footer
+round(FooterDot,4)
+local FooterText = makeLabel(Footer,"Ready • Files: 0 • Loaded: 0 • Failed: 0",UDim2.new(1,-30,1,0),UDim2.fromOffset(24,0),Enum.Font.Gotham,8,Theme.muted)
 
-local status = Instance.new("TextLabel")
-status.Size = UDim2.new(1, -30, 0, 25)
-status.Position = UDim2.fromOffset(15, 70)
-status.BackgroundTransparency = 1
-status.Text = "Ready • Delta/workspace • tekan SCAN RBXL"
-status.TextColor3 = Color3.fromRGB(105, 220, 145)
-status.Font = Enum.Font.Gotham
-status.TextSize = 9
-status.TextXAlignment = Enum.TextXAlignment.Left
-status.Parent = main
+local allCards = {}
+local loadedCount = 0
+local failedCount = 0
+local scanSerial = 0
 
-local list = Instance.new("ScrollingFrame")
-list.Size = UDim2.new(1, -30, 1, -112)
-list.Position = UDim2.fromOffset(15, 102)
-list.BackgroundColor3 = Color3.fromRGB(8, 10, 15)
-list.BorderSizePixel = 0
-list.ScrollBarThickness = 4
-list.AutomaticCanvasSize = Enum.AutomaticSize.Y
-list.CanvasSize = UDim2.new()
-list.Parent = main
-Instance.new("UICorner", list).CornerRadius = UDim.new(0, 9)
-local pad = Instance.new("UIPadding", list)
-pad.PaddingTop = UDim.new(0, 8)
-pad.PaddingLeft = UDim.new(0, 8)
-pad.PaddingRight = UDim.new(0, 8)
-pad.PaddingBottom = UDim.new(0, 8)
-local layout = Instance.new("UIListLayout", list)
-layout.Padding = UDim.new(0, 7)
+local function updateFooter(message, color)
+    FooterText.Text = message
+    FooterText.TextColor3 = color or Theme.muted
+end
 
 local function clearList()
-    for _, child in ipairs(list:GetChildren()) do
-        if child:IsA("Frame") then child:Destroy() end
+    for _, child in ipairs(List:GetChildren()) do
+        if child:IsA("Frame") and child ~= Empty then child:Destroy() end
+    end
+    table.clear(allCards)
+    Empty.Visible = true
+end
+
+local function refreshFilter()
+    local q = string.lower(Search.Text or "")
+    local visible = 0
+    for _, entry in ipairs(allCards) do
+        local name = string.lower(entry.name)
+        local path = string.lower(entry.path)
+        local show = q == "" or string.find(name,q,1,true) or string.find(path,q,1,true)
+        entry.card.Visible = show
+        if show then visible += 1 end
+    end
+    Empty.Visible = (#allCards == 0) or (visible == 0)
+    if #allCards == 0 then
+        EmptyLabel.Text = "No files detected yet.\nPress SCAN RBXL to search."
+    elseif visible == 0 then
+        EmptyLabel.Text = "No matching files.\nTry another search."
     end
 end
 
 local function addFileRow(path)
     local row = Instance.new("Frame")
-    row.Size = UDim2.new(1, -4, 0, 58)
-    row.BackgroundColor3 = Color3.fromRGB(18, 22, 31)
+    row.Name = "FileCard"
+    row.Size = UDim2.new(1,-6,0,64)
+    row.BackgroundColor3 = Theme.panel
     row.BorderSizePixel = 0
-    row.Parent = list
-    Instance.new("UICorner", row).CornerRadius = UDim.new(0, 8)
+    row.Parent = List
+    round(row,10)
+    stroke(row,Theme.border,1,0.35)
 
-    local name = Instance.new("TextLabel")
-    name.Size = UDim2.new(1, -105, 0, 21)
-    name.Position = UDim2.fromOffset(10, 6)
-    name.BackgroundTransparency = 1
-    name.Text = path:match("([^/\\]+)$") or path
-    name.TextColor3 = Color3.fromRGB(240, 242, 248)
-    name.Font = Enum.Font.GothamBold
-    name.TextSize = 10
-    name.TextXAlignment = Enum.TextXAlignment.Left
-    name.TextTruncate = Enum.TextTruncate.AtEnd
-    name.Parent = row
+    local typeBadge = Instance.new("Frame")
+    typeBadge.Size = UDim2.fromOffset(44,24)
+    typeBadge.Position = UDim2.fromOffset(9,20)
+    typeBadge.BackgroundColor3 = Color3.fromRGB(31,52,82)
+    typeBadge.BorderSizePixel = 0
+    typeBadge.Parent = row
+    round(typeBadge,7)
+    local typeText = makeLabel(typeBadge,"RBXL",UDim2.fromScale(1,1),UDim2.fromOffset(0,0),Enum.Font.GothamBold,7,Color3.fromRGB(205,220,245))
+    typeText.TextXAlignment = Enum.TextXAlignment.Center
 
-    local pathText = Instance.new("TextLabel")
-    pathText.Size = UDim2.new(1, -105, 0, 18)
-    pathText.Position = UDim2.fromOffset(10, 28)
-    pathText.BackgroundTransparency = 1
-    pathText.Text = path
-    pathText.TextColor3 = Color3.fromRGB(120, 125, 140)
-    pathText.Font = Enum.Font.Gotham
-    pathText.TextSize = 8
-    pathText.TextXAlignment = Enum.TextXAlignment.Left
-    pathText.TextTruncate = Enum.TextTruncate.AtEnd
-    pathText.Parent = row
+    local name = path:match("([^/\\]+)$") or path
+    local title = makeLabel(row,name,UDim2.new(1,-145,0,22),UDim2.fromOffset(62,7),Enum.Font.GothamBold,9,Theme.text)
+    title.TextTruncate = Enum.TextTruncate.AtEnd
+    local sub = makeLabel(row,path,UDim2.new(1,-145,0,18),UDim2.fromOffset(62,31),Enum.Font.Gotham,7,Theme.muted)
+    sub.TextTruncate = Enum.TextTruncate.AtEnd
 
-    local insert = Instance.new("TextButton")
-    insert.Size = UDim2.fromOffset(78, 32)
-    insert.Position = UDim2.new(1, -88, 0.5, -16)
-    insert.BackgroundColor3 = Color3.fromRGB(34, 56, 88)
-    insert.BorderSizePixel = 0
-    insert.Text = "IMPORT"
-    insert.TextColor3 = Color3.fromRGB(225, 235, 255)
-    insert.Font = Enum.Font.GothamBold
-    insert.TextSize = 9
-    insert.Parent = row
-    Instance.new("UICorner", insert).CornerRadius = UDim.new(0, 7)
+    local Import = Instance.new("TextButton")
+    Import.Size = UDim2.fromOffset(72,32)
+    Import.Position = UDim2.new(1,-82,0.5,-16)
+    Import.BackgroundColor3 = Theme.blue
+    Import.BorderSizePixel = 0
+    Import.Text = "IMPORT"
+    Import.TextColor3 = Color3.fromRGB(230,238,255)
+    Import.Font = Enum.Font.GothamBold
+    Import.TextSize = 8
+    Import.Parent = row
+    round(Import,8)
 
-    insert.MouseButton1Click:Connect(function()
-        insert.Text = "LOADING"
+    Import.Activated:Connect(function()
+        Import.Active = false
+        Import.Text = "LOADING"
+        StatusText.Text = "LOAD"
+        StatusText.TextColor3 = Theme.accentSoft
         task.spawn(function()
-            local ok, msg = importRBXL(path)
-            if ok then
-                insert.Text = "DONE"
-                insert.BackgroundColor3 = Color3.fromRGB(38, 104, 70)
-                status.Text = "READY • " .. msg
+            local callOk, importOk, msg = pcall(importRBXL, path)
+            if callOk and importOk then
+                loadedCount += 1
+                Import.Text = "DONE"
+                Import.BackgroundColor3 = Color3.fromRGB(38,104,70)
+                StatusText.Text = "READY"
+                StatusText.TextColor3 = Theme.success
+                updateFooter(string.format("Ready • Files: %d • Loaded: %d • Failed: %d",#allCards,loadedCount,failedCount),Theme.success)
             else
-                insert.Text = "FAIL"
-                insert.BackgroundColor3 = Color3.fromRGB(105, 35, 45)
-                status.Text = "ERROR • " .. tostring(msg)
+                failedCount += 1
+                Import.Text = "FAIL"
+                Import.BackgroundColor3 = Color3.fromRGB(105,35,45)
+                StatusText.Text = "ERROR"
+                StatusText.TextColor3 = Theme.danger
+                updateFooter("Error • "..tostring(msg or importOk),Theme.danger)
             end
-            task.wait(1.5)
-            insert.Text = "IMPORT"
-            insert.BackgroundColor3 = Color3.fromRGB(34, 56, 88)
+            task.wait(1.2)
+            if Import.Parent then
+                Import.Text = "IMPORT"
+                Import.BackgroundColor3 = Theme.blue
+                Import.Active = true
+            end
         end)
     end)
+
+    Empty.Visible = false
+    table.insert(allCards,{card=row,name=name,path=path})
 end
 
 local function scanFiles()
+    scanSerial += 1
+    local myScan = scanSerial
     clearList()
-    status.Text = "Scanning RBXL..."
-    local files = collectRBXL()
-    if #files == 0 then
-        status.Text = "Tidak ada .rbxl di folder Delta/workspace"
-        return
-    end
-    for _, path in ipairs(files) do addFileRow(path) end
-    status.Text = string.format("Ready • %d RBXL ditemukan di filesystem Delta", #files)
+    Search.Text = ""
+    Scan.Text = "SCANNING..."
+    Scan.Active = false
+    StatusText.Text = "SCAN"
+    StatusText.TextColor3 = Theme.accentSoft
+    updateFooter("Scanning Delta/workspace for .rbxl...",Theme.accentSoft)
+
+    task.spawn(function()
+        local ok, files = pcall(collectRBXL)
+        if myScan ~= scanSerial then return end
+        if not ok or type(files) ~= "table" then
+            Scan.Text = "SCAN RBXL"
+            Scan.Active = true
+            StatusText.Text = "ERROR"
+            StatusText.TextColor3 = Theme.danger
+            updateFooter("Scan gagal: "..tostring(files),Theme.danger)
+            return
+        end
+        for _, path in ipairs(files) do
+            addFileRow(path)
+        end
+        Scan.Text = "SCAN RBXL"
+        Scan.Active = true
+        StatusText.Text = "READY"
+        StatusText.TextColor3 = Theme.success
+        if #files == 0 then
+            updateFooter("Ready • Tidak ada .rbxl di Delta/workspace",Theme.muted)
+        else
+            updateFooter(string.format("Ready • Files: %d • Loaded: %d • Failed: %d",#files,loadedCount,failedCount),Theme.muted)
+        end
+        refreshFilter()
+    end)
 end
 
-scan.MouseButton1Click:Connect(scanFiles)
+Search:GetPropertyChangedSignal("Text"):Connect(refreshFilter)
+Scan.Activated:Connect(scanFiles)
+
+-- First scan automatically, same behavior as the original importer.
 scanFiles()
 
 -- Expose engine for the main HYAZ UI later without duplicating the parser.
 _G.HYAZ_RBXL_IMPORTER = {
-    Version = "V1.4",
+    Version = "V1.6",
     Parse = parseRBXLBinary,
     Import = importRBXL,
     Scan = collectRBXL,
 }
 
-print("[HYAZ RBXL IMPORTER V1.4] READY")
+print("[HYAZ RBXL IMPORTER V1.6] READY")
