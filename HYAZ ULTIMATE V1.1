@@ -1,4 +1,4 @@
---[[
+-- HYAZ // KING HYAZ GLITCH REVEAL BUILD 2026-08-17\n--[[
                                                                             
        Hyaz IMPORTER v1.0 - Dynamic Animated Gradient & Vector Icons     
        Features: Real-time UI Animations, Verified Asset Mapping            
@@ -679,16 +679,81 @@ BootMarker.Font = Enum.Font.Code
 BootMarker.TextSize = 12
 BootMarker.ZIndex = 1001
 
--- Main KING Hyaz text   GothamBold, no stroke
+-- Main KING HYAZ text
+-- Reveal effect: random/glitch characters -> real character, one by one.
 local KingText = Instance.new("TextLabel", CenterContainer)
 KingText.Size = UDim2.new(1, 0, 0, 62)
 KingText.Position = UDim2.new(0, 0, 0, 62)
 KingText.BackgroundTransparency = 1
-KingText.Text = "KING Hyaz V62"
+KingText.Text = "########"
 KingText.TextColor3 = Color3.fromRGB(255, 25, 45)
 KingText.Font = Enum.Font.GothamBold
 KingText.TextSize = 54
 KingText.ZIndex = 1001
+
+local RevealTarget = "KING HYAZ"
+local RevealChars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789@#$%&*!?XZ"
+local RevealFinished = false
+
+local function randomRevealChar()
+    local n = math.random(1, #RevealChars)
+    return RevealChars:sub(n, n)
+end
+
+local function buildRevealText(lockedCount)
+    local result = {}
+    for i = 1, #RevealTarget do
+        local targetChar = RevealTarget:sub(i, i)
+        if targetChar == " " then
+            result[i] = " "
+        elseif i <= lockedCount then
+            result[i] = targetChar
+        else
+            result[i] = randomRevealChar()
+        end
+    end
+    return table.concat(result)
+end
+
+-- Real character reveal sequence.
+-- Each character rapidly glitches before locking into the correct letter.
+task.spawn(function()
+    math.randomseed(os.clock() * 1000000)
+
+    KingText.Text = buildRevealText(0)
+
+    for locked = 1, #RevealTarget do
+        local targetChar = RevealTarget:sub(locked, locked)
+
+        if targetChar == " " then
+            KingText.Text = buildRevealText(locked)
+            task.wait(0.10)
+        else
+            for glitch = 1, 7 do
+                KingText.Text = buildRevealText(locked - 1)
+                KingText.TextColor3 = (glitch % 2 == 0)
+                    and Color3.fromRGB(255, 35, 55)
+                    or Color3.fromRGB(255, 110, 120)
+                task.wait(0.045)
+            end
+
+            -- Lock the real character.
+            KingText.Text = buildRevealText(locked)
+            KingText.TextColor3 = Color3.fromRGB(255, 25, 45)
+
+            -- Tiny reveal flash.
+            local originalPos = KingText.Position
+            KingText.Position = originalPos + UDim2.new(0, math.random(-2, 2), 0, 0)
+            task.wait(0.035)
+            KingText.Position = originalPos
+            task.wait(0.11)
+        end
+    end
+
+    KingText.Text = RevealTarget
+    KingText.TextColor3 = Color3.fromRGB(255, 45, 60)
+    RevealFinished = true
+end)
 
 -- Tagline below
 local TagLine = Instance.new("TextLabel", CenterContainer)
@@ -757,28 +822,36 @@ matrixConnection = RunService.RenderStepped:Connect(function(dt)
     end
 end)
 
--- Loading dot animation + pulse on KING Hyaz text
+-- Loading dot animation + subtle pulse while the reveal is running
 task.spawn(function()
-    local pulseUp = true
-    local r, g, b = 255, 25, 45
     local tick = 0
     while loadingActive do
         task.wait(0.35)
         dotIndex = (dotIndex % 3) + 1
         LoadDots.Text = dotStates[dotIndex]
-        -- Pulse red hue on main text
-        tick = tick + 1
-        if tick % 2 == 0 then
-            KingText.TextColor3 = Color3.fromRGB(255, 25, 45)
-        else
-            KingText.TextColor3 = Color3.fromRGB(255, 70, 85)
+
+        if not RevealFinished then
+            tick = tick + 1
+            if tick % 2 == 0 then
+                KingText.TextColor3 = Color3.fromRGB(255, 25, 45)
+            else
+                KingText.TextColor3 = Color3.fromRGB(255, 70, 85)
+            end
         end
     end
 end)
 
--- Auto-dismiss loading screen after 2.8 seconds
+-- Wait for the KING HYAZ reveal to actually finish.
+-- This replaces the old fixed 2.8 second timeout so the animation
+-- can never be cut off halfway.
 task.spawn(function()
-    task.wait(2.8)
+    local timeout = 0
+    while not RevealFinished and timeout < 6 do
+        task.wait(0.1)
+        timeout = timeout + 0.1
+    end
+
+    task.wait(0.65)
     loadingActive = false
     -- Fade out loading screen
     for i = 1, 20 do
