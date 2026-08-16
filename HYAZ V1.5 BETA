@@ -1,7 +1,7 @@
 -- HYAZ // STABLE BUILD - KING HYAZ GLITCH LOADING
 --[[
                                                                             
-       Hyaz IMPORTER v62.0 - RBXM + RBXL BINARY BETA V1.4     
+       Hyaz IMPORTER v62.0 - RBXM + RBXL BINARY BETA V1.5     
        Features: Real-time UI Animations, Verified Asset Mapping            
        Supports: RBXM, RBXMX, RBXL, RBXLX                                   
                                                                             
@@ -507,23 +507,28 @@ local function normalizeLoadedObjects(value)
 end
 
 -- ================================================================
--- HYAZ ULTIMATE V1.4 BETA // RBXL BINARY DECODER
--- Experimental: decodes Roblox Binary Place/Model chunks when the
--- runtime exposes a ZSTD/LZ4 decompression primitive.
+-- HYAZ ULTIMATE V1.5 BETA // RBXL BINARY DECODER
+-- ================================================================
+-- V1.5 fixes two concrete problems from V1.4:
+-- 1) ZSTD: Roblox's HttpService JSONDecode can decode a zbase64
+--    buffer representation back into the original bytes.
+-- 2) RBXL references are BYTE-INTERLEAVED + DELTA/ZIGZAG encoded;
+--    they are not independent big-endian integers.
 --
--- RBXL is a chunked binary format: META/SSTR/INST/PROP/PRNT/END.
--- Compressed chunks use ZSTD or LZ4. This beta deliberately refuses
--- to guess/execute arbitrary bytecode from the file.
+-- This build also honors service instances in INST/PRNT and applies
+-- a small set of safe, high-value properties (especially Name).
 -- ================================================================
 
 local RBXL_BETA = {
     enabled = true,
-    version = "1.3-BETA",
-    maxInstances = 20000,
+    version = "1.5-BETA",
+    maxInstances = 50000,
 }
 
 local function rbxl_u8(s, p)
-    return string.byte(s, p), p + 1
+    local v = string.byte(s, p)
+    if v == nil then return nil, p end
+    return v, p + 1
 end
 
 local function rbxl_u32le(s, p)
@@ -532,101 +537,109 @@ local function rbxl_u32le(s, p)
     return a + b*256 + c*65536 + d*16777216, p + 4
 end
 
-local function rbxl_i32le(s, p)
-    local n, np = rbxl_u32le(s, p)
-    if not n then return nil, np end
-    if n >= 2147483648 then n = n - 4294967296 end
-    return n, np
-end
-
-local function rbxl_u32be(s, p)
-    local a,b,c,d = string.byte(s, p, p+3)
-    if not a then return nil, p end
-    return a*16777216 + b*65536 + c*256 + d, p + 4
-end
-
 local function rbxl_string(s, p)
     local n, np = rbxl_u32le(s, p)
-    if not n or np + n - 1 > #s then return nil, p end
+    if not n or n > 16 * 1024 * 1024 or np + n - 1 > #s then return nil, p end
     return s:sub(np, np+n-1), np+n
 end
 
-local function rbxl_unzigzag(n)
-    if n % 2 == 0 then return n / 2 end
-    return -(n + 1) / 2
+-- Uses the same byte-interleaving/zigzag/delta representation already
+-- implemented and proven by the RBXM parser in this script.
+local function rbxl_ref_array(data, count)
+    if count <= 0 then return {} end
+    local b = Buffer(data, false)
+    local ints = basicTypes.Int32Array(b, count)
+    local refs = table.create(count)
+    local last = 0
+    for i = 1, count do
+        last = last + ints[i]
+        refs[i] = last
+    end
+    return refs
 end
 
--- Referents and many numeric arrays use Roblox's transformed /
--- interleaved representation. This helper decodes a single transformed
--- big-endian int32 after de-interleaving has already been performed.
-local function rbxl_read_transformed_i32_be(s, p)
-    local u, np = rbxl_u32be(s, p)
-    if not u then return nil, np end
-    return rbxl_unzigzag(u), np
+local function rbxl_zstd_decode(body)
+    if type(rbxm_zstd) ~= "function" then
+        return nil, "internal ZSTD bridge tidak tersedia"
+    end
+    local ok, result = pcall(rbxm_zstd, body)
+    if ok and type(result) == "string" then
+        return result
+    end
+    return nil, tostring(result)
+end
+
+local function rbxl_lz4_decode(body)
+    -- Some RBXL producers store the same 12-byte LZ4 framing used by
+    -- Roblox's binary model reader. Reuse the already-tested decoder.
+    if type(rbxm_lz4) ~= "function" then
+        return nil, "internal LZ4 bridge tidak tersedia"
+    end
+    local ok, result = pcall(rbxm_lz4, body)
+    if ok and type(result) == "string" then
+        return result
+    end
+    return nil, tostring(result)
 end
 
 local function rbxl_try_decompress(body, expected)
     local magic = body:sub(1,4)
     local candidates = {}
 
-    -- Different runtimes expose different names/signatures. We only call
-    -- functions that actually exist; each attempt is isolated with pcall.
     if magic == string.char(0x28,0xB5,0x2F,0xFD) then
+        -- FIRST: use Roblox's own ZSTD implementation through the
+        -- JSON buffer bridge already present in this script.
+        table.insert(candidates, function() return rbxl_zstd_decode(body) end)
+
+        -- Optional executor bridges, if present.
         if type(zstd_decompress) == "function" then
             table.insert(candidates, function() return zstd_decompress(body, expected) end)
             table.insert(candidates, function() return zstd_decompress(body) end)
         end
-        -- IMPORTANT: older builds define a local RBXM helper named zstd.
-        -- Never index a function as zstd.decompress; resolve the runtime API safely.
-        if type(zstd) == "function" then
-            table.insert(candidates, function() return zstd(body, expected) end)
-            table.insert(candidates, function() return zstd(body) end)
-        elseif type(zstd) == "table" then
-            if type(zstd.decompress) == "function" then
-                table.insert(candidates, function() return zstd.decompress(body, expected) end)
-                table.insert(candidates, function() return zstd.decompress(body) end)
-            end
-        end
         if type(crypt) == "table" and type(crypt.zstd) == "table" and type(crypt.zstd.decompress) == "function" then
             table.insert(candidates, function() return crypt.zstd.decompress(body) end)
+        end
+        if type(syn) == "table" and type(syn.crypt) == "table" and type(syn.crypt.zstd) == "function" then
+            table.insert(candidates, function() return syn.crypt.zstd(body) end)
         end
         if type(syn) == "table" and type(syn.crypt) == "table" and type(syn.crypt.zstd) == "table" and type(syn.crypt.zstd.decompress) == "function" then
             table.insert(candidates, function() return syn.crypt.zstd.decompress(body) end)
         end
     else
+        table.insert(candidates, function() return rbxl_lz4_decode(body) end)
         if type(lz4_decompress) == "function" then
             table.insert(candidates, function() return lz4_decompress(body, expected) end)
             table.insert(candidates, function() return lz4_decompress(body) end)
-        end
-        -- Same collision guard for runtimes exposing an lz4 function/table.
-        if type(lz4) == "function" then
-            table.insert(candidates, function() return lz4(body, expected) end)
-            table.insert(candidates, function() return lz4(body) end)
-        elseif type(lz4) == "table" then
-            if type(lz4.decompress) == "function" then
-                table.insert(candidates, function() return lz4.decompress(body, expected) end)
-                table.insert(candidates, function() return lz4.decompress(body) end)
-            end
         end
         if type(crypt) == "table" and type(crypt.lz4) == "table" and type(crypt.lz4.decompress) == "function" then
             table.insert(candidates, function() return crypt.lz4.decompress(body) end)
         end
     end
 
+    local lastError = "no decompressor"
     for _, fn in ipairs(candidates) do
-        local ok, out = pcall(fn)
-        if ok and type(out) == "string" and #out == expected then
-            return out, nil
+        local ok, out, extra = pcall(fn)
+        if ok and type(out) == "string" then
+            if #out == expected then
+                return out
+            end
+            lastError = "hasil decompression "..tostring(#out).." bytes, expected "..tostring(expected)
+        elseif ok and out == nil then
+            lastError = tostring(extra or "decompress gagal")
+        elseif not ok then
+            lastError = tostring(out)
         end
     end
 
-    return nil, magic == string.char(0x28,0xB5,0x2F,0xFD)
-        and "ZSTD decompressor tidak tersedia di environment"
-        or "LZ4 decompressor tidak tersedia di environment"
+    if magic == string.char(0x28,0xB5,0x2F,0xFD) then
+        return nil, "ZSTD gagal: "..lastError
+    end
+    return nil, "LZ4 gagal: "..lastError
 end
 
 local function rbxl_decode_chunks(data)
-    if data:sub(1,14) ~= "<roblox!" .. string.char(0x89,0xFF,0x0D,0x0A,0x1A,0x0A) then
+    local signature = "<roblox!" .. string.char(0x89,0xFF,0x0D,0x0A,0x1A,0x0A)
+    if data:sub(1,14) ~= signature then
         return nil, "Header RBXL binary tidak valid"
     end
     if #data < 32 then return nil, "Header RBXL terlalu pendek" end
@@ -636,20 +649,24 @@ local function rbxl_decode_chunks(data)
 
     local classCount = select(1, rbxl_u32le(data,17))
     local instanceCount = select(1, rbxl_u32le(data,21))
+    if not classCount or not instanceCount then return nil, "Header RBXL rusak" end
+    if instanceCount > RBXL_BETA.maxInstances then
+        return nil, "InstanceCount terlalu besar: "..tostring(instanceCount)
+    end
+
     local pos = 33
     local chunks = {}
-    local compressedSeen = {}
     local endSeen = false
 
     while pos + 15 <= #data do
         local name = data:sub(pos,pos+3)
         local clen = select(1, rbxl_u32le(data,pos+4))
         local ulen = select(1, rbxl_u32le(data,pos+8))
+        if not clen or not ulen then return nil, "Chunk header rusak: "..name end
         pos = pos + 16
 
-        if not clen then return nil, "Chunk header rusak" end
         local storedLen = clen ~= 0 and clen or ulen
-        if pos + storedLen - 1 > #data then
+        if storedLen > #data or pos + storedLen - 1 > #data then
             return nil, "Chunk "..name.." melebihi ukuran file"
         end
 
@@ -657,140 +674,221 @@ local function rbxl_decode_chunks(data)
         pos = pos + storedLen
 
         if clen ~= 0 then
-            compressedSeen[name] = true
             local decoded, derr = rbxl_try_decompress(body, ulen)
             if not decoded then
-                return nil, "Chunk "..name.." terkompresi: "..derr
+                return nil, "Chunk "..name.." terkompresi: "..tostring(derr)
             end
             body = decoded
+        elseif #body ~= ulen then
+            return nil, "Chunk "..name.." panjang tidak cocok"
         end
 
-        chunks[#chunks+1] = {name=name, data=body, compressed=(clen ~= 0)}
+        chunks[#chunks+1] = {name=name, data=body}
         if name == "END\0" or name == "END." then
             endSeen = true
             break
         end
     end
 
-    if not endSeen then
-        return nil, "Chunk END tidak ditemukan"
-    end
-
+    if not endSeen then return nil, "Chunk END tidak ditemukan" end
     return {
         version=version,
         classCount=classCount,
         instanceCount=instanceCount,
         chunks=chunks,
-        compressedSeen=compressedSeen,
-    }, nil
+    }
 end
 
 local function rbxl_parse_inst(chunk, model)
-    local p = 1
-    local classId = select(1, rbxl_u32le(chunk,p)); p=p+4
-    local className; className,p = rbxl_string(chunk,p)
-    if not className then return false end
-    local objectFormat; objectFormat,p = rbxl_u8(chunk,p)
-    local count; count,p = rbxl_u32le(chunk,p)
-    if not count or count > RBXL_BETA.maxInstances then return false end
+    local b = Buffer(chunk, false)
+    local classId = b:readNumber("<I4")
+    local className = basicTypes.String(b)
+    local hasService = b:read() == "\1"
+    local count = b:readNumber("<I4")
+    if not className or count > RBXL_BETA.maxInstances then return false, "INST count invalid" end
 
-    local refs = {}
-    for i=1,count do
-        local v; v,p = rbxl_read_transformed_i32_be(chunk,p)
-        if not v then return false end
-        refs[i] = v
-    end
-
+    local refs = basicTypes.RefArray(b, count)
     model.classes[classId] = {
-        id=classId, name=className, service=(objectFormat == 1), refs=refs
+        id=classId,
+        name=className,
+        service=hasService,
+        refs=refs,
+        size=count,
     }
+
     for _, ref in ipairs(refs) do
         model.refClass[ref] = className
+        model.refService[ref] = hasService
         model.refOrder[#model.refOrder+1] = ref
     end
     return true
 end
 
-local function rbxl_parse_prnt(chunk, model)
-    local p = 1
-    local ver; ver,p = rbxl_u8(chunk,p)
-    local count; count,p = rbxl_u32le(chunk,p)
-    if ver ~= 0 or not count or count > RBXL_BETA.maxInstances then return false end
+local function rbxl_parse_prop(chunk, model)
+    local b = Buffer(chunk, false)
+    local classId = b:readNumber("<I4")
+    local class = model.classes[classId]
+    if not class then return false, "PROP class tidak ditemukan: "..tostring(classId) end
+    local propName = basicTypes.String(b)
+    local typeId = string.byte(b:read())
+    if not propName or not typeId then return false, "PROP header rusak" end
 
-    local children, parents = {}, {}
-    for i=1,count do
-        children[i],p = rbxl_read_transformed_i32_be(chunk,p)
-        if not children[i] then return false end
+    local n = class.size
+    local values = {}
+
+    -- V1.5 intentionally decodes the most useful/common property types first.
+    if typeId == 0x01 then
+        for i=1,n do values[i]=basicTypes.String(b) end
+    elseif typeId == 0x02 then
+        for i=1,n do values[i]=(b:read() ~= "\0") end
+    elseif typeId == 0x03 then
+        values=basicTypes.Int32Array(b,n)
+    elseif typeId == 0x04 then
+        values=basicTypes.RbxF32Array(b,n)
+    elseif typeId == 0x05 then
+        for i=1,n do values[i]=basicTypes.Float64(b) end
+    elseif typeId == 0x0C then
+        local r=basicTypes.RbxF32Array(b,n); local g=basicTypes.RbxF32Array(b,n); local bl=basicTypes.RbxF32Array(b,n)
+        for i=1,n do values[i]={r=r[i],g=g[i],b=bl[i]} end
+    elseif typeId == 0x0D then
+        local x=basicTypes.RbxF32Array(b,n); local y=basicTypes.RbxF32Array(b,n)
+        for i=1,n do values[i]={x=x[i],y=y[i]} end
+    elseif typeId == 0x0E then
+        local x=basicTypes.RbxF32Array(b,n); local y=basicTypes.RbxF32Array(b,n); local z=basicTypes.RbxF32Array(b,n)
+        for i=1,n do values[i]={x=x[i],y=y[i],z=z[i]} end
+    elseif typeId == 0x13 then
+        values=basicTypes.RefArray(b,n)
+    elseif typeId == 0x14 then
+        for i=1,n do
+            local x=b:readNumber("<i2"); local y=b:readNumber("<i2"); local z=b:readNumber("<i2")
+            values[i]={x=x,y=y,z=z}
+        end
+    elseif typeId == 0x1A then
+        local bytes=basicTypes.InterleaveArrayWithSize(b,n,3)
+        for i=1,n do
+            local q=bytes:read(3); values[i]={r=string.byte(q,1)/255,g=string.byte(q,2)/255,b=string.byte(q,3)/255}
+        end
+    elseif typeId == 0x1B then
+        values=basicTypes.Int64Array(b,n)
+    else
+        -- Unknown property type: leave it untouched rather than corrupting the
+        -- rest of the chunk. It is recorded as unsupported for diagnostics.
+        model.unsupportedProps[#model.unsupportedProps+1] = propName.." [0x"..string.format("%02X",typeId).."] on "..class.name
+        return true
     end
-    for i=1,count do
-        parents[i],p = rbxl_read_transformed_i32_be(chunk,p)
-        if not parents[i] then return false end
-    end
-    model.parentPairs = {}
-    for i=1,count do
-        model.parentPairs[#model.parentPairs+1] = {child=children[i], parent=parents[i]}
-    end
+
+    model.properties[#model.properties+1] = {classId=classId,name=propName,values=values,refs=class.refs}
     return true
 end
 
-local function rbxl_safe_instance(className, name)
+local function rbxl_service_for(className)
+    local ok, service = pcall(function() return game:GetService(className) end)
+    if ok and service then return service end
+    return nil
+end
+
+local function rbxl_safe_instance(className)
     local ok, obj = pcall(Instance.new, className)
     if not ok or not obj then return nil end
-    pcall(function() obj.Name = name or className end)
     return obj
 end
 
 local function rbxl_materialize(model)
     local instances = {}
-    local rootObjects = {}
+    local roots = {}
 
+    -- First pass: services are references to existing Roblox services.
     for ref, className in pairs(model.refClass) do
-        if className ~= "DataModel" then
-            local obj = rbxl_safe_instance(className, className)
+        if model.refService[ref] then
+            local svc = rbxl_service_for(className)
+            if svc then instances[ref] = svc end
+        else
+            local obj = rbxl_safe_instance(className)
             if obj then instances[ref] = obj end
         end
     end
 
-    -- Apply hierarchy after all instances exist.
-    for _, pair in ipairs(model.parentPairs or {}) do
-        local child = instances[pair.child]
-        if child then
-            local parent = instances[pair.parent]
-            if parent then
-                pcall(function() child.Parent = parent end)
-            else
-                rootObjects[#rootObjects+1] = child
+    -- Apply Name first, before parenting, where possible.
+    for _, prop in ipairs(model.properties) do
+        if prop.name == "Name" then
+            for i, ref in ipairs(prop.refs) do
+                local obj=instances[ref]; local v=prop.values[i]
+                if obj and type(v)=="string" and v~="" then
+                    pcall(function() obj.Name=v end)
+                end
             end
         end
     end
 
-    return instances, rootObjects
+    -- Then hierarchy.
+    for _, pair in ipairs(model.parentPairs) do
+        local child = instances[pair.child]
+        local parent = instances[pair.parent]
+        if child then
+            if parent then
+                pcall(function() child.Parent = parent end)
+            else
+                -- -1 is the DataModel root in a place.
+                if not model.refService[pair.child] then
+                    roots[#roots+1] = child
+                end
+            end
+        end
+    end
+
+    -- Apply a safe subset of simple properties after parenting.
+    for _, prop in ipairs(model.properties) do
+        if prop.name ~= "Name" then
+            for i, ref in ipairs(prop.refs) do
+                local obj=instances[ref]; local v=prop.values[i]
+                if obj and v ~= nil then
+                    local ok = pcall(function()
+                        if prop.name == "Anchored" and type(v)=="boolean" then obj.Anchored=v
+                        elseif prop.name == "CanCollide" and type(v)=="boolean" then obj.CanCollide=v
+                        elseif prop.name == "Transparency" and type(v)=="number" then obj.Transparency=v
+                        elseif prop.name == "Reflectance" and type(v)=="number" then obj.Reflectance=v
+                        elseif prop.name == "Size" and type(v)=="table" and v.x then obj.Size=Vector3.new(v.x,v.y,v.z)
+                        elseif prop.name == "Position" and type(v)=="table" and v.x then obj.Position=Vector3.new(v.x,v.y,v.z)
+                        elseif prop.name == "Color" and type(v)=="table" and v.r then obj.Color=Color3.new(v.r,v.g,v.b)
+                        elseif prop.name == "BrickColor" and type(v)=="number" then obj.BrickColor=BrickColor.new(v)
+                    end)
+                end
+            end
+        end
+    end
+
+    return instances, roots
 end
 
 local function loadRBXLBinaryBeta(fileInfo)
     local data = safeReadFile(fileInfo.path)
-    if not data or #data == 0 then
-        return false, "RBXL BETA: readfile gagal"
-    end
+    if not data or #data == 0 then return false, "RBXL BETA: readfile gagal" end
 
     local parsed, err = rbxl_decode_chunks(data)
-    if not parsed then
-        return false, "RBXL BETA: "..tostring(err)
-    end
+    if not parsed then return false, "RBXL BETA: "..tostring(err) end
 
     local model = {
-        classes={}, refClass={}, refOrder={}, parentPairs={}
+        classes={}, refClass={}, refService={}, refOrder={},
+        parentPairs={}, properties={}, unsupportedProps={}
     }
 
     for _, ch in ipairs(parsed.chunks) do
         if ch.name == "INST" then
-            if not rbxl_parse_inst(ch.data, model) then
-                return false, "RBXL BETA: INST chunk tidak dapat diparse"
-            end
+            local ok, e = rbxl_parse_inst(ch.data, model)
+            if not ok then return false, "RBXL BETA: INST gagal: "..tostring(e) end
+        elseif ch.name == "PROP" then
+            local ok, e = rbxl_parse_prop(ch.data, model)
+            if not ok then return false, "RBXL BETA: PROP gagal: "..tostring(e) end
         elseif ch.name == "PRNT" then
-            if not rbxl_parse_prnt(ch.data, model) then
-                return false, "RBXL BETA: PRNT chunk tidak dapat diparse"
-            end
+            local b = Buffer(ch.data, false)
+            local ver = string.byte(b:read())
+            local count = b:readNumber("<I4")
+            if ver ~= 0 or count > RBXL_BETA.maxInstances then return false, "RBXL BETA: PRNT header invalid" end
+            local raw = b:read(count*4)
+            local children = rbxl_ref_array(raw,count)
+            raw = b:read(count*4)
+            local parents = rbxl_ref_array(raw,count)
+            for i=1,count do model.parentPairs[#model.parentPairs+1]={child=children[i],parent=parents[i]} end
         end
     end
 
@@ -799,25 +897,22 @@ local function loadRBXLBinaryBeta(fileInfo)
     for _, obj in ipairs(roots) do
         pcall(function()
             local target = SVC_MAP[obj.ClassName] or workspace
-            if target == workspace and obj:IsA("Service") then target = ReplicatedStorage end
             obj.Parent = target
             injectAllScripts(obj, {})
             ApplyStudioLiteProperties(obj)
             LoadAssetsToSLServer(obj)
-            count = count + 1
+            count=count+1
         end)
     end
 
     if count == 0 then
-        return false, string.format(
-            "RBXL BETA parsed (%d instance refs) tetapi root object belum dapat dimaterialisasi",
-            parsed.instanceCount or 0
-        )
+        return false, string.format("RBXL BETA parsed %d refs tetapi tidak ada root object", parsed.instanceCount or 0)
     end
 
+    local unsupported = #model.unsupportedProps
     return true, string.format(
-        "RBXL BETA loaded • %d root object(s) • %d refs",
-        count, parsed.instanceCount or 0
+        "RBXL BETA loaded • %d root • %d refs • %d unsupported props",
+        count, parsed.instanceCount or 0, unsupported
     )
 end
 
