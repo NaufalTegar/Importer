@@ -1,7 +1,7 @@
 -- HYAZ // STABLE BUILD - KING HYAZ GLITCH LOADING
 --[[
                                                                             
-       Hyaz IMPORTER v62.0 - RBXM + RBXL BINARY BETA     
+       Hyaz IMPORTER v62.0 - RBXM + RBXL BINARY BETA V1.4     
        Features: Real-time UI Animations, Verified Asset Mapping            
        Supports: RBXM, RBXMX, RBXL, RBXLX                                   
                                                                             
@@ -167,7 +167,7 @@ function basicTypes.RefArray(buffer, count)
     return o
 end
 
-local function lz4(lz4data)
+local function rbxm_lz4(lz4data)
     local inputStream = Buffer(lz4data)
     local compressedLen = string.unpack("<I4", inputStream:read(4))
     local decompressedLen = string.unpack("<I4", inputStream:read(4))
@@ -218,7 +218,7 @@ local function b64encode(str)
     return table.concat(out)
 end
 
-local function zstd(stream)
+local function rbxm_zstd(stream)
     local zbase64 = b64encode(stream)
     local json = '{"m":null,"t":"buffer","zbase64":"' .. zbase64 .. '"}'
     local x = HttpService:JSONDecode(json)
@@ -252,8 +252,8 @@ local function parseRBXMForSources(data)
         if compressed == 0 then
             dataChunk = rbxmBuffer:read(decompressed + 12)
         else
-            if zstd_check == string.char(40,181,47,253) then rbxmBuffer:seek(12); dataChunk = zstd(rbxmBuffer:read(compressed))
-            else dataChunk = lz4(rbxmBuffer:read(compressed + 12)) end
+            if zstd_check == string.char(40,181,47,253) then rbxmBuffer:seek(12); dataChunk = rbxm_zstd(rbxmBuffer:read(compressed))
+            else dataChunk = rbxm_lz4(rbxmBuffer:read(compressed + 12)) end
         end
         chunk.Data = Buffer(dataChunk, false); table.insert(chunkInfo[chunk.Header], chunk); last_chunk = chunk
     until last_chunk and last_chunk.Header == _EC
@@ -507,7 +507,7 @@ local function normalizeLoadedObjects(value)
 end
 
 -- ================================================================
--- HYAZ ULTIMATE V1.3 BETA // RBXL BINARY DECODER
+-- HYAZ ULTIMATE V1.4 BETA // RBXL BINARY DECODER
 -- Experimental: decodes Roblox Binary Place/Model chunks when the
 -- runtime exposes a ZSTD/LZ4 decompression primitive.
 --
@@ -576,14 +576,21 @@ local function rbxl_try_decompress(body, expected)
             table.insert(candidates, function() return zstd_decompress(body, expected) end)
             table.insert(candidates, function() return zstd_decompress(body) end)
         end
-        if zstd and type(zstd.decompress) == "function" then
-            table.insert(candidates, function() return zstd.decompress(body, expected) end)
-            table.insert(candidates, function() return zstd.decompress(body) end)
+        -- IMPORTANT: older builds define a local RBXM helper named zstd.
+        -- Never index a function as zstd.decompress; resolve the runtime API safely.
+        if type(zstd) == "function" then
+            table.insert(candidates, function() return zstd(body, expected) end)
+            table.insert(candidates, function() return zstd(body) end)
+        elseif type(zstd) == "table" then
+            if type(zstd.decompress) == "function" then
+                table.insert(candidates, function() return zstd.decompress(body, expected) end)
+                table.insert(candidates, function() return zstd.decompress(body) end)
+            end
         end
-        if crypt and crypt.zstd and type(crypt.zstd.decompress) == "function" then
+        if type(crypt) == "table" and type(crypt.zstd) == "table" and type(crypt.zstd.decompress) == "function" then
             table.insert(candidates, function() return crypt.zstd.decompress(body) end)
         end
-        if syn and syn.crypt and syn.crypt.zstd and type(syn.crypt.zstd.decompress) == "function" then
+        if type(syn) == "table" and type(syn.crypt) == "table" and type(syn.crypt.zstd) == "table" and type(syn.crypt.zstd.decompress) == "function" then
             table.insert(candidates, function() return syn.crypt.zstd.decompress(body) end)
         end
     else
@@ -591,11 +598,17 @@ local function rbxl_try_decompress(body, expected)
             table.insert(candidates, function() return lz4_decompress(body, expected) end)
             table.insert(candidates, function() return lz4_decompress(body) end)
         end
-        if lz4 and type(lz4.decompress) == "function" then
-            table.insert(candidates, function() return lz4.decompress(body, expected) end)
-            table.insert(candidates, function() return lz4.decompress(body) end)
+        -- Same collision guard for runtimes exposing an lz4 function/table.
+        if type(lz4) == "function" then
+            table.insert(candidates, function() return lz4(body, expected) end)
+            table.insert(candidates, function() return lz4(body) end)
+        elseif type(lz4) == "table" then
+            if type(lz4.decompress) == "function" then
+                table.insert(candidates, function() return lz4.decompress(body, expected) end)
+                table.insert(candidates, function() return lz4.decompress(body) end)
+            end
         end
-        if crypt and crypt.lz4 and type(crypt.lz4.decompress) == "function" then
+        if type(crypt) == "table" and type(crypt.lz4) == "table" and type(crypt.lz4.decompress) == "function" then
             table.insert(candidates, function() return crypt.lz4.decompress(body) end)
         end
     end
