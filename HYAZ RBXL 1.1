@@ -1,4 +1,4 @@
--- HYAZ RBXL IMPORTER V1.0
+-- HYAZ RBXL IMPORTER V1.1
 -- Standalone RBXL binary importer extracted from HYAZ ULTIMATE.
 -- Focus: .rbxl binary parsing + decompression + instance reconstruction.
 -- RBXM/RBXMX/UI utama tidak ikut di file ini agar engine lebih mudah diuji.
@@ -17,7 +17,7 @@ _G.Hyaz_RAW_SOURCES = _G.Hyaz_RAW_SOURCES or {}
 -- CONFIG
 -- ============================================================
 local CONFIG = {
-    WindowName = "HYAZ RBXL IMPORTER V1.0",
+    WindowName = "HYAZ RBXL IMPORTER V1.1",
     ScanLabel = "SCAN RBXL",
     MaxFiles = 80,
     KeepPreviousImports = true,
@@ -540,40 +540,68 @@ end
 
 local function collectRBXL()
     local result, seen = {}, {}
+
+    -- Delta/executor file roots. We intentionally scan the filesystem,
+    -- not Roblox Workspace, because RBXL files are external files.
     local roots = {
-        "workspace",
-        "Workspace",
+        "/sdcard/Delta/workspace",
+        "/sdcard/Android/Delta/workspace",
+        "/storage/emulated/0/Delta/workspace",
+        "/storage/emulated/0/Android/Delta/workspace",
         "Delta/workspace",
         "delta/workspace",
         "Android/Delta/workspace",
+        "workspace",
+        "Workspace",
+        ".",
+        "",
     }
 
+    local function normalize(p)
+        return tostring(p):gsub("\\", "/")
+    end
+
     local function add(path)
-        if #result >= CONFIG.MaxFiles then return end
-        if not isRBXL(path) or seen[path] then return end
-        seen[path] = true
-        result[#result + 1] = path
+        path = normalize(path)
+        if #result >= CONFIG.MaxFiles or seen[path] then return end
+        if isRBXL(path) then
+            seen[path] = true
+            result[#result + 1] = path
+        end
     end
 
     local function walk(path, depth)
-        if #result >= CONFIG.MaxFiles or depth > 6 or type(listfiles) ~= "function" then return end
+        if #result >= CONFIG.MaxFiles or depth > 8 then return end
+        if type(listfiles) ~= "function" then return end
+
         local ok, entries = pcall(listfiles, path)
         if not ok or type(entries) ~= "table" then return end
+
         for _, entry in ipairs(entries) do
             if #result >= CONFIG.MaxFiles then break end
-            local lower = tostring(entry):lower()
-            if lower:match("%.rbxl$") then
-                add(entry)
+
+            local p = normalize(entry)
+            if isRBXL(p) then
+                add(p)
             elseif type(isfolder) == "function" then
-                local fok, folder = pcall(isfolder, entry)
-                if fok and folder then walk(entry, depth + 1) end
+                local fok, folder = pcall(isfolder, p)
+                if fok and folder then
+                    walk(p, depth + 1)
+                end
             end
         end
     end
 
+    -- Avoid repeatedly walking the same physical root.
+    local rootSeen = {}
     for _, root in ipairs(roots) do
-        walk(root, 0)
+        root = normalize(root)
+        if not rootSeen[root] then
+            rootSeen[root] = true
+            walk(root, 0)
+        end
     end
+
     return result
 end
 
@@ -610,28 +638,115 @@ end
 -- ============================================================
 -- COMPACT TEST UI
 -- ============================================================
-local old = GuiParent:FindFirstChild("HYAZ_RBXL_IMPORTER_V10")
+local old = GuiParent:FindFirstChild("HYAZ_RBXL_IMPORTER_V11")
 if old then old:Destroy() end
 
 local gui = Instance.new("ScreenGui")
-gui.Name = "HYAZ_RBXL_IMPORTER_V10"
+gui.Name = "HYAZ_RBXL_IMPORTER_V11"
 gui.ResetOnSpawn = false
 gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 gui.Parent = GuiParent
 
 local main = Instance.new("Frame")
-main.Size = UDim2.fromOffset(430, 430)
-main.Position = UDim2.new(0.5, -215, 0.5, -215)
+main.Size = UDim2.new(0, 460, 0, 440)
+main.Position = UDim2.new(0.5, -230, 0.5, -220)
 main.BackgroundColor3 = Color3.fromRGB(12, 15, 22)
 main.BorderSizePixel = 0
+main.ClipsDescendants = true
 main.Parent = gui
 Instance.new("UICorner", main).CornerRadius = UDim.new(0, 12)
 local mainStroke = Instance.new("UIStroke", main)
 mainStroke.Color = Color3.fromRGB(92, 20, 35)
 mainStroke.Thickness = 1.2
 
+-- Window controls: draggable on mouse/touch and minimizable.
+local UserInputService = game:GetService("UserInputService")
+local minimized = false
+local normalSize = UDim2.new(0, 460, 0, 440)
+local miniSize = UDim2.new(0, 460, 0, 58)
+
+local dragBar = Instance.new("Frame")
+dragBar.Size = UDim2.new(1, -105, 0, 58)
+dragBar.Position = UDim2.fromOffset(0, 0)
+dragBar.BackgroundTransparency = 1
+dragBar.Active = true
+dragBar.Parent = main
+
+local minimize = Instance.new("TextButton")
+minimize.Size = UDim2.fromOffset(34, 30)
+minimize.Position = UDim2.new(1, -78, 0, 14)
+minimize.BackgroundColor3 = Color3.fromRGB(30, 35, 48)
+minimize.BorderSizePixel = 0
+minimize.Text = "—"
+minimize.TextColor3 = Color3.fromRGB(225, 230, 240)
+minimize.Font = Enum.Font.GothamBold
+minimize.TextSize = 16
+minimize.Parent = main
+Instance.new("UICorner", minimize).CornerRadius = UDim.new(0, 8)
+
+local close = Instance.new("TextButton")
+close.Size = UDim2.fromOffset(34, 30)
+close.Position = UDim2.new(1, -38, 0, 14)
+close.BackgroundColor3 = Color3.fromRGB(105, 20, 35)
+close.BorderSizePixel = 0
+close.Text = "×"
+close.TextColor3 = Color3.fromRGB(255, 235, 238)
+close.Font = Enum.Font.GothamBold
+close.TextSize = 17
+close.Parent = main
+Instance.new("UICorner", close).CornerRadius = UDim.new(0, 8)
+
+local function setMinimized(state)
+    minimized = state
+    if minimized then
+        main.Size = miniSize
+        minimize.Text = "+"
+    else
+        main.Size = normalSize
+        minimize.Text = "—"
+    end
+end
+
+minimize.MouseButton1Click:Connect(function()
+    setMinimized(not minimized)
+end)
+
+close.MouseButton1Click:Connect(function()
+    gui:Destroy()
+end)
+
+local dragging = false
+local dragStart, startPos
+
+dragBar.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1
+        or input.UserInputType == Enum.UserInputType.Touch then
+        dragging = true
+        dragStart = input.Position
+        startPos = main.Position
+
+        input.Changed:Connect(function()
+            if input.UserInputState == Enum.UserInputState.End then
+                dragging = false
+            end
+        end)
+    end
+end)
+
+UserInputService.InputChanged:Connect(function(input)
+    if not dragging then return end
+    if input.UserInputType ~= Enum.UserInputType.MouseMovement
+        and input.UserInputType ~= Enum.UserInputType.Touch then return end
+
+    local delta = input.Position - dragStart
+    main.Position = UDim2.new(
+        startPos.X.Scale, startPos.X.Offset + delta.X,
+        startPos.Y.Scale, startPos.Y.Offset + delta.Y
+    )
+end)
+
 local title = Instance.new("TextLabel")
-title.Size = UDim2.new(1, -30, 0, 38)
+title.Size = UDim2.new(1, -125, 0, 38)
 title.Position = UDim2.fromOffset(15, 8)
 title.BackgroundTransparency = 1
 title.Text = "HYAZ RBXL IMPORTER"
@@ -642,10 +757,10 @@ title.TextXAlignment = Enum.TextXAlignment.Left
 title.Parent = main
 
 local version = Instance.new("TextLabel")
-version.Size = UDim2.new(1, -30, 0, 18)
+version.Size = UDim2.new(1, -125, 0, 18)
 version.Position = UDim2.fromOffset(15, 39)
 version.BackgroundTransparency = 1
-version.Text = "V1.0 • RBXL BINARY ENGINE"
+version.Text = "V1.1 • RBXL BINARY ENGINE • DELTA WORKSPACE"
 version.TextColor3 = Color3.fromRGB(145, 150, 165)
 version.Font = Enum.Font.Gotham
 version.TextSize = 9
@@ -653,8 +768,8 @@ version.TextXAlignment = Enum.TextXAlignment.Left
 version.Parent = main
 
 local scan = Instance.new("TextButton")
-scan.Size = UDim2.fromOffset(125, 34)
-scan.Position = UDim2.new(1, -140, 0, 18)
+scan.Size = UDim2.fromOffset(118, 34)
+scan.Position = UDim2.new(1, -205, 0, 14)
 scan.BackgroundColor3 = Color3.fromRGB(105, 20, 35)
 scan.BorderSizePixel = 0
 scan.Text = CONFIG.ScanLabel
@@ -668,7 +783,7 @@ local status = Instance.new("TextLabel")
 status.Size = UDim2.new(1, -30, 0, 25)
 status.Position = UDim2.fromOffset(15, 70)
 status.BackgroundTransparency = 1
-status.Text = "Ready • tekan SCAN RBXL"
+status.Text = "Ready • Delta/workspace • tekan SCAN RBXL"
 status.TextColor3 = Color3.fromRGB(105, 220, 145)
 status.Font = Enum.Font.Gotham
 status.TextSize = 9
@@ -768,11 +883,11 @@ local function scanFiles()
     status.Text = "Scanning RBXL..."
     local files = collectRBXL()
     if #files == 0 then
-        status.Text = "Tidak ada .rbxl ditemukan"
+        status.Text = "Tidak ada .rbxl di folder Delta/workspace"
         return
     end
     for _, path in ipairs(files) do addFileRow(path) end
-    status.Text = string.format("Ready • %d RBXL ditemukan", #files)
+    status.Text = string.format("Ready • %d RBXL ditemukan di filesystem Delta", #files)
 end
 
 scan.MouseButton1Click:Connect(scanFiles)
@@ -780,10 +895,10 @@ scanFiles()
 
 -- Expose engine for the main HYAZ UI later without duplicating the parser.
 _G.HYAZ_RBXL_IMPORTER = {
-    Version = "V1.0",
+    Version = "V1.1",
     Parse = parseRBXLBinary,
     Import = importRBXL,
     Scan = collectRBXL,
 }
 
-print("[HYAZ RBXL IMPORTER V1.0] READY")
+print("[HYAZ RBXL IMPORTER V1.1] READY")
