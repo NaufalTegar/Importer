@@ -1,9 +1,9 @@
 -- HYAZ // STABLE BUILD - KING HYAZ GLITCH LOADING
 --[[
                                                                             
-       Hyaz IMPORTER v62.0 - RBXM + RBXL BINARY BETA V1.6     
+       Hyaz IMPORTER v62.0 - Dynamic Animated Gradient & Vector Icons     
        Features: Real-time UI Animations, Verified Asset Mapping            
-       Supports: RBXM, RBXMX, RBXL, RBXLX                                   
+       Supports: RBXM, RBXL, RBXLX, RBXMX                                   
                                                                             
 ]]
 
@@ -36,7 +36,6 @@ end
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local HttpService = game:GetService("HttpService")
-local EncodingService = game:GetService("EncodingService")
 local UserInputService = game:GetService("UserInputService")
 local InsertService = game:GetService("InsertService")
 local CoreGui = game:GetService("CoreGui")
@@ -168,7 +167,7 @@ function basicTypes.RefArray(buffer, count)
     return o
 end
 
-local function rbxm_lz4(lz4data)
+local function lz4(lz4data)
     local inputStream = Buffer(lz4data)
     local compressedLen = string.unpack("<I4", inputStream:read(4))
     local decompressedLen = string.unpack("<I4", inputStream:read(4))
@@ -219,119 +218,251 @@ local function b64encode(str)
     return table.concat(out)
 end
 
-local function rbxm_zstd(stream)
-    local zbase64 = b64encode(stream)
-    local json = '{"m":null,"t":"buffer","zbase64":"' .. zbase64 .. '"}'
-    local x = HttpService:JSONDecode(json)
-    return buffer.tostring(x)
+local function _bytesToString(v)
+    if type(v) == "string" then return v end
+    local ok, out = pcall(function()
+        if type(buffer) == "table" and type(buffer.tostring) == "function" then
+            return buffer.tostring(v)
+        end
+        return nil
+    end)
+    if ok and type(out) == "string" then return out end
+    local ok2, out2 = pcall(function()
+        if type(buffer) == "table" and type(buffer.len) == "function" and type(buffer.readu8) == "function" then
+            local n = buffer.len(v)
+            local parts = table.create(math.ceil(n / 4096))
+            local k = 0
+            for i = 0, n - 1, 4096 do
+                local e = math.min(n - 1, i + 4095)
+                local chars = table.create(e - i + 1)
+                for j = i, e do chars[j - i + 1] = string.char(buffer.readu8(v, j)) end
+                k += 1
+                parts[k] = table.concat(chars)
+            end
+            return table.concat(parts)
+        end
+        return nil
+    end)
+    if ok2 and type(out2) == "string" then return out2 end
+    return nil
+end
+
+local function _zstdViaEncodingService(data)
+    local ok, result = pcall(function()
+        local EncodingService = game:GetService("EncodingService")
+        local CompressionAlgorithm = Enum.CompressionAlgorithm
+        if type(buffer) ~= "table" or type(buffer.fromstring) ~= "function" then error("buffer API unavailable") end
+        if not CompressionAlgorithm or not CompressionAlgorithm.Zstd then error("Zstd enum unavailable") end
+        local compressed = buffer.fromstring(data)
+        local decoded = EncodingService:DecompressBuffer(compressed, CompressionAlgorithm.Zstd)
+        local text = _bytesToString(decoded)
+        if not text then error("failed to convert decompressed buffer") end
+        return text
+    end)
+    return ok and result or nil
+end
+
+local function _zstdViaJSON(data)
+    local zbase64 = b64encode(data)
+    local ok, result = pcall(function()
+        local x = HttpService:JSONDecode('{"m":null,"t":"buffer","zbase64":"' .. zbase64 .. '"}')
+        local text = _bytesToString(x)
+        if not text then error("JSONDecode returned a buffer but this runtime has no buffer->string bridge") end
+        return text
+    end)
+    return ok and result or nil
+end
+
+local function zstd(stream)
+    local out = _zstdViaEncodingService(stream)
+    if out then return out end
+    out = _zstdViaJSON(stream)
+    if out then return out end
+    error("ZSTD decompressor tidak tersedia/compatible di environment ini")
+end
+
+local function _readVector3(buffer, count)
+    local xs = basicTypes.RbxF32Array(buffer, count)
+    local ys = basicTypes.RbxF32Array(buffer, count)
+    local zs = basicTypes.RbxF32Array(buffer, count)
+    local out = table.create(count)
+    for i = 1, count do out[i] = Vector3.new(xs[i], ys[i], zs[i]) end
+    return out
+end
+
+local function _readColor3(buffer, count)
+    local rs = basicTypes.RbxF32Array(buffer, count)
+    local gs = basicTypes.RbxF32Array(buffer, count)
+    local bs = basicTypes.RbxF32Array(buffer, count)
+    local out = table.create(count)
+    for i = 1, count do out[i] = Color3.new(rs[i], gs[i], bs[i]) end
+    return out
+end
+
+local function _readVector2(buffer, count)
+    local xs = basicTypes.RbxF32Array(buffer, count)
+    local ys = basicTypes.RbxF32Array(buffer, count)
+    local out = table.create(count)
+    for i = 1, count do out[i] = Vector2.new(xs[i], ys[i]) end
+    return out
+end
+
+local function _readCFrames(buffer, count)
+    local ids = table.create(count)
+    local rot = table.create(count)
+    for i = 1, count do
+        local id = string.byte(buffer:read())
+        ids[i] = id
+        if id == 0 then
+            local m = table.create(9)
+            for j = 1, 9 do m[j] = buffer:readNumber("<f") end
+            rot[i] = m
+        end
+    end
+    local pos = _readVector3(buffer, count)
+    local special = {
+        [0x02] = CFrame.new(), [0x03] = CFrame.Angles(math.rad(90),0,0), [0x05] = CFrame.Angles(0,math.rad(180),math.rad(180)),
+        [0x06] = CFrame.Angles(math.rad(-90),0,0), [0x07] = CFrame.Angles(0,math.rad(180),math.rad(90)), [0x09] = CFrame.Angles(0,math.rad(90),math.rad(90)),
+        [0x0A] = CFrame.Angles(0,0,math.rad(90)), [0x0C] = CFrame.Angles(0,math.rad(-90),math.rad(90)), [0x0D] = CFrame.Angles(math.rad(-90),math.rad(-90),0),
+        [0x0E] = CFrame.Angles(0,math.rad(-90),0), [0x10] = CFrame.Angles(math.rad(90),math.rad(-90),0), [0x11] = CFrame.Angles(0,math.rad(90),math.rad(180)),
+        [0x14] = CFrame.Angles(0,math.rad(180),0), [0x15] = CFrame.Angles(math.rad(-90),math.rad(-180),0), [0x17] = CFrame.Angles(0,0,math.rad(180)),
+        [0x18] = CFrame.Angles(math.rad(90),math.rad(180),0), [0x19] = CFrame.Angles(0,0,math.rad(-90)), [0x1B] = CFrame.Angles(0,math.rad(-90),math.rad(-90)),
+        [0x1C] = CFrame.Angles(0,math.rad(-180),math.rad(-90)), [0x1E] = CFrame.Angles(0,math.rad(90),math.rad(-90)), [0x1F] = CFrame.Angles(math.rad(90),math.rad(90),0),
+        [0x20] = CFrame.Angles(0,math.rad(90),0), [0x22] = CFrame.Angles(math.rad(-90),math.rad(90),0), [0x23] = CFrame.Angles(0,math.rad(-90),math.rad(180)),
+    }
+    local out = table.create(count)
+    for i = 1, count do
+        local p = pos[i]
+        if ids[i] ~= 0 then out[i] = CFrame.new(p) * (special[ids[i]] or CFrame.new())
+        else
+            local m = rot[i]
+            out[i] = CFrame.new(p.X,p.Y,p.Z,m[1],m[2],m[3],m[4],m[5],m[6],m[7],m[8],m[9])
+        end
+    end
+    return out
+end
+
+local function _decodePropertyArray(buffer, typeID, count, sharedStrings)
+    if typeID == 0x01 or typeID == 0x1D then
+        local a = table.create(count); for i=1,count do a[i]=basicTypes.String(buffer) end; return a
+    elseif typeID == 0x02 then
+        local a=table.create(count); for i=1,count do a[i]=string.byte(buffer:read())~=0 end; return a
+    elseif typeID == 0x03 then return basicTypes.Int32Array(buffer,count)
+    elseif typeID == 0x04 then return basicTypes.RbxF32Array(buffer,count)
+    elseif typeID == 0x05 then local a=table.create(count); for i=1,count do a[i]=basicTypes.Float64(buffer) end; return a
+    elseif typeID == 0x0B then local raw=basicTypes.unsignedIntArray(buffer,count); return raw
+    elseif typeID == 0x0C then return _readColor3(buffer,count)
+    elseif typeID == 0x0D then return _readVector2(buffer,count)
+    elseif typeID == 0x0E then return _readVector3(buffer,count)
+    elseif typeID == 0x10 then return _readCFrames(buffer,count)
+    elseif typeID == 0x12 then return basicTypes.unsignedIntArray(buffer,count)
+    elseif typeID == 0x13 then return basicTypes.RefArray(buffer,count)
+    elseif typeID == 0x14 then
+        local a=table.create(count); for i=1,count do a[i]=Vector3int16.new(buffer:readNumber("<i2"),buffer:readNumber("<i2"),buffer:readNumber("<i2")) end; return a
+    elseif typeID == 0x17 then
+        local a=table.create(count); for i=1,count do a[i]=NumberRange.new(buffer:readNumber("<f"),buffer:readNumber("<f")) end; return a
+    elseif typeID == 0x18 then
+        local xs=_readVector2(buffer,count); local ys=_readVector2(buffer,count); local a=table.create(count); for i=1,count do a[i]=Rect.new(xs[i],ys[i]) end; return a
+    elseif typeID == 0x1A then
+        local rs=table.create(count); local gs=table.create(count); local bs=table.create(count); for i=1,count do rs[i]=string.byte(buffer:read()) end; for i=1,count do gs[i]=string.byte(buffer:read()) end; for i=1,count do bs[i]=string.byte(buffer:read()) end; local a=table.create(count); for i=1,count do a[i]=Color3.fromRGB(rs[i],gs[i],bs[i]) end; return a
+    elseif typeID == 0x1B then return basicTypes.Int64Array(buffer,count)
+    elseif typeID == 0x1C then
+        local idx=basicTypes.unsignedIntArray(buffer,count); local a=table.create(count); for i=1,count do a[i]=sharedStrings and sharedStrings[idx[i]] or nil end; return a
+    elseif typeID == 0x1F then
+        local a=table.create(count); for i=1,count do a[i]={Index=buffer:readNumber("<I4"),Time=buffer:readNumber("<I4"),Random=buffer:readNumber("<I8")} end; return a
+    elseif typeID == 0x20 then
+        local a=table.create(count); for i=1,count do local family=basicTypes.String(buffer); local weight=buffer:readNumber("<I2"); local style=string.byte(buffer:read()); local cached=basicTypes.String(buffer); a[i]={Family=family,Weight=weight,Style=style,CachedFaceId=cached} end; return a
+    end
+    return nil
+end
+
+local function parseRBXLBinary(data)
+    local r = Buffer(data, false)
+    if r:read(14) ~= "<roblox!" .. string.char(137,255,13,10,26,10) then return nil, "RBXL header tidak valid" end
+    local version=r:readNumber("<I2"); if version~=0 then return nil,"RBXL version tidak didukung: "..tostring(version) end
+    local classCount=r:readNumber("<I4"); local instCount=r:readNumber("<I4"); r:read(8)
+    local chunks={META={},SSTR={},INST={},PROP={},PRNT={},SIGN={},["END\0"]={}}
+    while r.Offset < r.Length do
+        local sig=r:read(4); local compressed=r:readNumber("<I4"); local decompressed=r:readNumber("<I4"); r:read(4)
+        if sig=="END\0" then chunks[sig][#chunks[sig]+1]={Data=r:read(decompressed)}; break end
+        local payload
+        if compressed==0 then payload=r:read(decompressed) else
+            local raw=r:read(compressed); local magic=string.sub(raw,1,4)
+            if magic==string.char(40,181,47,253) then payload=zstd(raw) else payload=lz4(string.pack("<I4I4I4", compressed, decompressed, 0) .. raw) end
+            if #payload ~= decompressed then warn("[Hyaz RBXL] chunk "..sig.." length mismatch: "..#payload.." / "..decompressed) end
+        end
+        if not chunks[sig] then return nil,"RBXL chunk tidak dikenal: "..sig end
+        chunks[sig][#chunks[sig]+1]={Data=payload}
+    end
+    local shared={}
+    for _,ch in ipairs(chunks.SSTR) do local b=Buffer(ch.Data,false); local ver=b:readNumber("<I4"); local n=b:readNumber("<I4"); for i=1,n do b:read(16); shared[i]=basicTypes.String(b) end end
+    local classes={}; local nodes={}; local serviceRefs={}
+    for _,ch in ipairs(chunks.INST) do
+        local b=Buffer(ch.Data,false); local cid=b:readNumber("<I4"); local cname=basicTypes.String(b); local format=string.byte(b:read()); local n=b:readNumber("<I4"); local refs=basicTypes.RefArray(b,n)
+        classes[cid]={Name=cname,Count=n,Refs=refs,IsService=(format==1)}
+        local marks={}; if format==1 then for i=1,n do marks[i]=string.byte(b:read())~=0 end end
+        for i,ref in ipairs(refs) do nodes[ref]={Ref=ref,ClassId=cid,ClassName=cname,IsService=(format==1),Properties={},Children={},Service=marks[i] or false} end
+        if format==1 then for i,ref in ipairs(refs) do serviceRefs[ref]=true end end
+    end
+    for _,ch in ipairs(chunks.PROP) do
+        local b=Buffer(ch.Data,false); local cid=b:readNumber("<I4"); local cls=classes[cid]; if not cls then return nil,"PROP class id tidak ditemukan: "..cid end
+        local pname=basicTypes.String(b); local typeID=string.byte(b:read())
+        local vals=_decodePropertyArray(b,typeID,cls.Count,shared)
+        if vals then for i,ref in ipairs(cls.Refs) do if nodes[ref] then nodes[ref].Properties[pname]=vals[i] end end end
+    end
+    local childToParent={}
+    for _,ch in ipairs(chunks.PRNT) do local b=Buffer(ch.Data,false); local ver=string.byte(b:read()); if ver~=0 then return nil,"PRNT version tidak didukung" end; local n=b:readNumber("<I4"); local children=basicTypes.RefArray(b,n); local parents=basicTypes.RefArray(b,n); for i=1,n do childToParent[children[i]]=parents[i] end end
+    local roots={}
+    for ref,node in pairs(nodes) do
+        local p=childToParent[ref]
+        if p and p~=-1 and nodes[p] then table.insert(nodes[p].Children,node) else table.insert(roots,node) end
+    end
+    return {Header={ClassCount=classCount,InstanceCount=instCount},Nodes=nodes,Roots=roots,Services=serviceRefs,SharedStrings=shared}, nil
+end
+
+local function createRBXLInstances(parsed, sourceName)
+    local folder=Instance.new("Folder")
+    folder.Name=(sourceName or "RBXL") .. " [RBXL BETA]"
+    local made={}
+    local skipServiceRoots={}
+    local function makeNode(node)
+        if node.IsService or node.Service then return nil end
+        local ok,obj=pcall(Instance.new,node.ClassName)
+        if not ok or not obj then return nil end
+        made[node.Ref]=obj
+        pcall(function() obj.Name=node.Properties.Name or node.ClassName end)
+        local props=node.Properties
+        pcall(function() if props.Anchored~=nil and obj:IsA("BasePart") then obj.Anchored=props.Anchored end end)
+        pcall(function() if props.CanCollide~=nil and obj:IsA("BasePart") then obj.CanCollide=props.CanCollide end end)
+        pcall(function() if props.Transparency~=nil and obj:IsA("BasePart") then obj.Transparency=props.Transparency end end)
+        pcall(function() if props.Reflectance~=nil and obj:IsA("BasePart") then obj.Reflectance=props.Reflectance end end)
+        pcall(function() if props.Size~=nil and obj:IsA("BasePart") then obj.Size=props.Size end end)
+        pcall(function() if props.Color~=nil and obj:IsA("BasePart") then obj.Color=props.Color end end)
+        pcall(function() if props.CFrame~=nil and obj:IsA("BasePart") then obj.CFrame=props.CFrame end end)
+        pcall(function() if props.Material~=nil and obj:IsA("BasePart") then obj.Material=Enum.Material:FromValue(props.Material) end end)
+        for _,child in ipairs(node.Children) do local c=makeNode(child); if c then c.Parent=obj end end
+        return obj
+    end
+    for _,root in ipairs(parsed.Roots) do
+        if not root.IsService and not root.Service then local obj=makeNode(root); if obj then obj.Parent=folder end
+        else for _,child in ipairs(root.Children) do local obj=makeNode(child); if obj then obj.Parent=folder end end end
+    end
+    return folder, made
 end
 
 local function parseRBXMForSources(data)
-    local sources = {}
-    local rbxmBuffer = Buffer(data, false)
-    if rbxmBuffer:read(8) ~= "<roblox!" or rbxmBuffer:read(6) ~= string.char(137,255,13,10,26,10) then return sources, "Invalid header" end
-    if rbxmBuffer:read(2) ~= (string.char(0)..string.char(0)) then return sources, "Invalid version" end
-    local classCount = rbxmBuffer:readNumber("<i4")
-    local instCount = rbxmBuffer:readNumber("<i4")
-    local classRefs, virtualInstances, strings, chunkInfo = {}, {}, {}, {}
-    local _EC = "END"..string.char(0)
-    local valid = {[_EC]=true, ["INST"]=true, ["META"]=true, ["PRNT"]=true, ["PROP"]=true, ["SIGN"]=true, ["SSTR"]=true}
-    for k in pairs(valid) do chunkInfo[k] = {} end
-    if rbxmBuffer:read(8) ~= string.char(0,0,0,0,0,0,0,0) then return sources, "Invalid header" end
-
-    local index, last_chunk = 0, nil
-    repeat
-        index = index + 1
-        local chunk = {InternalID = index, Header = rbxmBuffer:read(4)}
-        if not valid[chunk.Header] then return sources, "Invalid chunk" end
-        local lz4Header = rbxmBuffer:read(16, false)
-        local compressed = string.unpack("<I4", string.sub(lz4Header, 1, 4))
-        local decompressed = string.unpack("<I4", string.sub(lz4Header, 5, 8))
-        local reserved = string.sub(lz4Header, 9, 12)
-        local zstd_check = string.sub(lz4Header, 13, 16)
-        local dataChunk
-        if compressed == 0 then
-            dataChunk = rbxmBuffer:read(decompressed + 12)
-        else
-            if zstd_check == string.char(40,181,47,253) then rbxmBuffer:seek(12); dataChunk = rbxm_zstd(rbxmBuffer:read(compressed))
-            else dataChunk = rbxm_lz4(rbxmBuffer:read(compressed + 12)) end
-        end
-        chunk.Data = Buffer(dataChunk, false); table.insert(chunkInfo[chunk.Header], chunk); last_chunk = chunk
-    until last_chunk and last_chunk.Header == _EC
-
-    for _, chunk in ipairs(chunkInfo["SSTR"] or {}) do
-        local buffer = chunk.Data
-        if buffer:readNumber("<I4") == 0 then
-            for i = 1, buffer:readNumber("<I4") do buffer:read(16); strings[i] = basicTypes.String(buffer) end
-        end
+    local parsed, err = parseRBXLBinary(data)
+    if not parsed then return {}, err end
+    local sources={}
+    local function walk(n,path)
+        local src=n.Properties.Source or n.Properties.ContentText
+        if type(src)=="string" and #src>0 then sources[path]=src end
+        for _,c in ipairs(n.Children) do walk(c,path.."."..c.ClassName..":"..tostring(c.Properties.Name or "unnamed")) end
     end
-
-    for _, chunk in ipairs(chunkInfo["INST"] or {}) do
-        local buffer = chunk.Data
-        local classID = buffer:readNumber("<I4"); local className = basicTypes.String(buffer)
-        if buffer:read() == "\1" then return sources, "Contains services" end
-        local count = buffer:readNumber("<I4"); local refs = basicTypes.RefArray(buffer, count)
-        classRefs[classID] = { Name = className, Sizeof = count, Refs = refs }
-        for _, ref in ipairs(refs) do virtualInstances[ref] = { ClassId = classID, ClassName = className, Ref = ref, Properties = {}, Children = {} } end
-    end
-
-    for _, chunk in ipairs(chunkInfo["PROP"] or {}) do
-        local buffer = chunk.Data
-        local classID = buffer:readNumber("<I4"); local classref = classRefs[classID]
-        if not classref then return sources, "Missing classref" end
-        local refs = classref.Refs; local sizeof = classref.Sizeof; local name = basicTypes.String(buffer)
-        if string.byte(buffer:read(1, false)) == 0x1E then buffer:seek(1) end
-        local typeID = string.byte(buffer:read()); local props = {}
-        if typeID == 0x01 or typeID == 0x1D then
-            for i = 1, sizeof do props[i] = basicTypes.String(buffer) end
-        elseif typeID == 0x02 then
-            for i = 1, sizeof do props[i] = buffer:read() ~= string.char(0) end
-        elseif typeID == 0x03 then props = basicTypes.Int32Array(buffer, sizeof)
-        elseif typeID == 0x04 then props = basicTypes.RbxF32Array(buffer, sizeof)
-        elseif typeID == 0x05 then
-            for i = 1, sizeof do props[i] = basicTypes.Float64(buffer) end
-        else
-            for i = 1, sizeof do
-                if typeID == 0x13 then props = basicTypes.RefArray(buffer, sizeof); break else buffer:read(4) end
-            end
-        end
-        if name == "Source" or name == "ContentText" then
-            for i, v in ipairs(refs) do
-                if virtualInstances[v] and props[i] then virtualInstances[v].Properties[name] = props[i] end
-            end
-        end
-    end
-
-    local function buildSourceMap(node, path)
-        local src = node.Properties["Source"] or node.Properties["ContentText"]
-        if src and type(src) == "string" and #src > 0 then sources[path] = src end
-        for _, child in ipairs(node.Children or {}) do buildSourceMap(child, path .. "." .. child.ClassName .. ":" .. (child.Properties["Name"] or "unnamed")) end
-    end
-
-    for _, chunk in ipairs(chunkInfo["PRNT"] or {}) do
-        local buffer = chunk.Data
-        if buffer:read() ~= string.char(0) then return sources, "Invalid PRNT" end
-        local count = buffer:readNumber("<I4")
-        local child_refs = basicTypes.RefArray(buffer, count); local parent_refs = basicTypes.RefArray(buffer, count)
-        for i = 1, count do
-            local child = virtualInstances[child_refs[i]]; local parent = virtualInstances[parent_refs[i]]
-            if child and parent then table.insert(parent.Children, child) end
-        end
-    end
-
-    local roots = {}
-    for _, inst in pairs(virtualInstances) do
-        local hasParent = false
-        for _, other in pairs(virtualInstances) do
-            for _, child in ipairs(other.Children or {}) do if child.Ref == inst.Ref then hasParent = true; break end end
-            if hasParent then break end
-        end
-        if not hasParent then table.insert(roots, inst) end
-    end
-    for _, root in ipairs(roots) do buildSourceMap(root, root.ClassName .. ":" .. (root.Properties["Name"] or "root")) end
-
-    return sources, nil
+    for _,r in ipairs(parsed.Roots) do walk(r,r.ClassName..":"..tostring(r.Properties.Name or "root")) end
+    return sources,nil
 end
+
 
 --                                                                        
 -- STUDIO LITE INTEGRATION
@@ -482,497 +613,30 @@ local function insertObjects(objects, isRbxl, sourceMap)
     return count
 end
 
-local function safeReadFile(p)
-    if not readfile then return nil end
-    local ok, d = pcall(readfile, p)
-    return ok and d or nil
-end
-
--- Normalize every loader result into an array of Instances.
--- Some environments return a single Instance from LoadLocalAsset, while
--- GetObjects normally returns an array.
-local function normalizeLoadedObjects(value)
-    if typeof(value) == "Instance" then
-        return { value }
-    end
-    if type(value) == "table" then
-        local out = {}
-        for _, item in ipairs(value) do
-            if typeof(item) == "Instance" then
-                table.insert(out, item)
-            end
-        end
-        return out
-    end
-    return {}
-end
-
--- ================================================================
--- HYAZ ULTIMATE V1.6 BETA // RBXL BINARY DECODER
--- ================================================================
--- V1.6 fixes two concrete problems from V1.4:
--- 1) ZSTD: V1.6 uses Roblox EncodingService:DecompressBuffer.
--- 2) RBXL references are BYTE-INTERLEAVED + DELTA/ZIGZAG encoded;
---    they are not independent big-endian integers.
---
--- This build also honors service instances in INST/PRNT and applies
--- a small set of safe, high-value properties (especially Name).
--- ================================================================
-
-local RBXL_BETA = {
-    enabled = true,
-    version = "1.6-BETA",
-    maxInstances = 50000,
-}
-
-local function rbxl_u8(s, p)
-    local v = string.byte(s, p)
-    if v == nil then return nil, p end
-    return v, p + 1
-end
-
-local function rbxl_u32le(s, p)
-    local a,b,c,d = string.byte(s, p, p+3)
-    if not a then return nil, p end
-    return a + b*256 + c*65536 + d*16777216, p + 4
-end
-
-local function rbxl_string(s, p)
-    local n, np = rbxl_u32le(s, p)
-    if not n or n > 16 * 1024 * 1024 or np + n - 1 > #s then return nil, p end
-    return s:sub(np, np+n-1), np+n
-end
-
--- Uses the same byte-interleaving/zigzag/delta representation already
--- implemented and proven by the RBXM parser in this script.
-local function rbxl_ref_array(data, count)
-    if count <= 0 then return {} end
-    local b = Buffer(data, false)
-    local ints = basicTypes.Int32Array(b, count)
-    local refs = table.create(count)
-    local last = 0
-    for i = 1, count do
-        last = last + ints[i]
-        refs[i] = last
-    end
-    return refs
-end
-
-local function rbxl_zstd_decode(body)
-    -- V1.6 incorrectly treated JSON buffer decoding as ZSTD decompression.
-    -- Roblox now exposes the actual ZSTD decoder through EncodingService.
-    if not EncodingService then
-        return nil, "EncodingService tidak tersedia"
-    end
-    local ok, result = pcall(function()
-        local input = buffer.fromstring(body)
-        local output = EncodingService:DecompressBuffer(input, Enum.CompressionAlgorithm.Zstd)
-        return buffer.tostring(output)
-    end)
-    if ok and type(result) == "string" then
-        return result
-    end
-    return nil, tostring(result)
-end
-
-local function rbxl_lz4_decode(body)
-    -- Some RBXL producers store the same 12-byte LZ4 framing used by
-    -- Roblox's binary model reader. Reuse the already-tested decoder.
-    if type(rbxm_lz4) ~= "function" then
-        return nil, "internal LZ4 bridge tidak tersedia"
-    end
-    local ok, result = pcall(rbxm_lz4, body)
-    if ok and type(result) == "string" then
-        return result
-    end
-    return nil, tostring(result)
-end
-
-local function rbxl_try_decompress(body, expected)
-    local magic = body:sub(1,4)
-    local candidates = {}
-
-    if magic == string.char(0x28,0xB5,0x2F,0xFD) then
-        -- FIRST: use Roblox's real ZSTD implementation.
-        table.insert(candidates, function() return rbxl_zstd_decode(body) end)
-
-        -- Optional executor bridges, if present.
-        if type(zstd_decompress) == "function" then
-            table.insert(candidates, function() return zstd_decompress(body, expected) end)
-            table.insert(candidates, function() return zstd_decompress(body) end)
-        end
-        if type(crypt) == "table" and type(crypt.zstd) == "table" and type(crypt.zstd.decompress) == "function" then
-            table.insert(candidates, function() return crypt.zstd.decompress(body) end)
-        end
-        if type(syn) == "table" and type(syn.crypt) == "table" and type(syn.crypt.zstd) == "function" then
-            table.insert(candidates, function() return syn.crypt.zstd(body) end)
-        end
-        if type(syn) == "table" and type(syn.crypt) == "table" and type(syn.crypt.zstd) == "table" and type(syn.crypt.zstd.decompress) == "function" then
-            table.insert(candidates, function() return syn.crypt.zstd.decompress(body) end)
-        end
-    else
-        table.insert(candidates, function() return rbxl_lz4_decode(body) end)
-        if type(lz4_decompress) == "function" then
-            table.insert(candidates, function() return lz4_decompress(body, expected) end)
-            table.insert(candidates, function() return lz4_decompress(body) end)
-        end
-        if type(crypt) == "table" and type(crypt.lz4) == "table" and type(crypt.lz4.decompress) == "function" then
-            table.insert(candidates, function() return crypt.lz4.decompress(body) end)
-        end
-    end
-
-    local lastError = "no decompressor"
-    for _, fn in ipairs(candidates) do
-        local ok, out, extra = pcall(fn)
-        if ok and type(out) == "string" then
-            if #out == expected then
-                return out
-            end
-            lastError = "hasil decompression "..tostring(#out).." bytes, expected "..tostring(expected)
-        elseif ok and out == nil then
-            lastError = tostring(extra or "decompress gagal")
-        elseif not ok then
-            lastError = tostring(out)
-        end
-    end
-
-    if magic == string.char(0x28,0xB5,0x2F,0xFD) then
-        return nil, "ZSTD gagal: "..lastError.." | EncodingService DecompressBuffer diperlukan"
-    end
-    return nil, "LZ4 gagal: "..lastError
-end
-
-local function rbxl_decode_chunks(data)
-    local signature = "<roblox!" .. string.char(0x89,0xFF,0x0D,0x0A,0x1A,0x0A)
-    if data:sub(1,14) ~= signature then
-        return nil, "Header RBXL binary tidak valid"
-    end
-    if #data < 32 then return nil, "Header RBXL terlalu pendek" end
-
-    local version = string.byte(data,15) + string.byte(data,16)*256
-    if version ~= 0 then return nil, "RBXL version tidak didukung: "..tostring(version) end
-
-    local classCount = select(1, rbxl_u32le(data,17))
-    local instanceCount = select(1, rbxl_u32le(data,21))
-    if not classCount or not instanceCount then return nil, "Header RBXL rusak" end
-    if instanceCount > RBXL_BETA.maxInstances then
-        return nil, "InstanceCount terlalu besar: "..tostring(instanceCount)
-    end
-
-    local pos = 33
-    local chunks = {}
-    local endSeen = false
-
-    while pos + 15 <= #data do
-        local name = data:sub(pos,pos+3)
-        local clen = select(1, rbxl_u32le(data,pos+4))
-        local ulen = select(1, rbxl_u32le(data,pos+8))
-        if not clen or not ulen then return nil, "Chunk header rusak: "..name end
-        pos = pos + 16
-
-        local storedLen = clen ~= 0 and clen or ulen
-        if storedLen > #data or pos + storedLen - 1 > #data then
-            return nil, "Chunk "..name.." melebihi ukuran file"
-        end
-
-        local body = data:sub(pos, pos+storedLen-1)
-        pos = pos + storedLen
-
-        if clen ~= 0 then
-            local decoded, derr = rbxl_try_decompress(body, ulen)
-            if not decoded then
-                return nil, "Chunk "..name.." terkompresi: "..tostring(derr)
-            end
-            body = decoded
-        elseif #body ~= ulen then
-            return nil, "Chunk "..name.." panjang tidak cocok"
-        end
-
-        chunks[#chunks+1] = {name=name, data=body}
-        if name == "END\0" or name == "END." then
-            endSeen = true
-            break
-        end
-    end
-
-    if not endSeen then return nil, "Chunk END tidak ditemukan" end
-    return {
-        version=version,
-        classCount=classCount,
-        instanceCount=instanceCount,
-        chunks=chunks,
-    }
-end
-
-local function rbxl_parse_inst(chunk, model)
-    local b = Buffer(chunk, false)
-    local classId = b:readNumber("<I4")
-    local className = basicTypes.String(b)
-    local hasService = b:read() == "\1"
-    local count = b:readNumber("<I4")
-    if not className or count > RBXL_BETA.maxInstances then return false, "INST count invalid" end
-
-    local refs = basicTypes.RefArray(b, count)
-    model.classes[classId] = {
-        id=classId,
-        name=className,
-        service=hasService,
-        refs=refs,
-        size=count,
-    }
-
-    for _, ref in ipairs(refs) do
-        model.refClass[ref] = className
-        model.refService[ref] = hasService
-        model.refOrder[#model.refOrder+1] = ref
-    end
-    return true
-end
-
-local function rbxl_parse_prop(chunk, model)
-    local b = Buffer(chunk, false)
-    local classId = b:readNumber("<I4")
-    local class = model.classes[classId]
-    if not class then return false, "PROP class tidak ditemukan: "..tostring(classId) end
-    local propName = basicTypes.String(b)
-    local typeId = string.byte(b:read())
-    if not propName or not typeId then return false, "PROP header rusak" end
-
-    local n = class.size
-    local values = {}
-
-    -- V1.6 intentionally decodes the most useful/common property types first.
-    if typeId == 0x01 then
-        for i=1,n do values[i]=basicTypes.String(b) end
-    elseif typeId == 0x02 then
-        for i=1,n do values[i]=(b:read() ~= "\0") end
-    elseif typeId == 0x03 then
-        values=basicTypes.Int32Array(b,n)
-    elseif typeId == 0x04 then
-        values=basicTypes.RbxF32Array(b,n)
-    elseif typeId == 0x05 then
-        for i=1,n do values[i]=basicTypes.Float64(b) end
-    elseif typeId == 0x0C then
-        local r=basicTypes.RbxF32Array(b,n); local g=basicTypes.RbxF32Array(b,n); local bl=basicTypes.RbxF32Array(b,n)
-        for i=1,n do values[i]={r=r[i],g=g[i],b=bl[i]} end
-    elseif typeId == 0x0D then
-        local x=basicTypes.RbxF32Array(b,n); local y=basicTypes.RbxF32Array(b,n)
-        for i=1,n do values[i]={x=x[i],y=y[i]} end
-    elseif typeId == 0x0E then
-        local x=basicTypes.RbxF32Array(b,n); local y=basicTypes.RbxF32Array(b,n); local z=basicTypes.RbxF32Array(b,n)
-        for i=1,n do values[i]={x=x[i],y=y[i],z=z[i]} end
-    elseif typeId == 0x13 then
-        values=basicTypes.RefArray(b,n)
-    elseif typeId == 0x14 then
-        for i=1,n do
-            local x=b:readNumber("<i2"); local y=b:readNumber("<i2"); local z=b:readNumber("<i2")
-            values[i]={x=x,y=y,z=z}
-        end
-    elseif typeId == 0x1A then
-        local bytes=basicTypes.InterleaveArrayWithSize(b,n,3)
-        for i=1,n do
-            local q=bytes:read(3); values[i]={r=string.byte(q,1)/255,g=string.byte(q,2)/255,b=string.byte(q,3)/255}
-        end
-    elseif typeId == 0x1B then
-        values=basicTypes.Int64Array(b,n)
-    else
-        -- Unknown property type: leave it untouched rather than corrupting the
-        -- rest of the chunk. It is recorded as unsupported for diagnostics.
-        model.unsupportedProps[#model.unsupportedProps+1] = propName.." [0x"..string.format("%02X",typeId).."] on "..class.name
-        return true
-    end
-
-    model.properties[#model.properties+1] = {classId=classId,name=propName,values=values,refs=class.refs}
-    return true
-end
-
-local function rbxl_service_for(className)
-    local ok, service = pcall(function() return game:GetService(className) end)
-    if ok and service then return service end
-    return nil
-end
-
-local function rbxl_safe_instance(className)
-    local ok, obj = pcall(Instance.new, className)
-    if not ok or not obj then return nil end
-    return obj
-end
-
-local function rbxl_materialize(model)
-    local instances = {}
-    local roots = {}
-
-    -- First pass: services are references to existing Roblox services.
-    for ref, className in pairs(model.refClass) do
-        if model.refService[ref] then
-            local svc = rbxl_service_for(className)
-            if svc then instances[ref] = svc end
-        else
-            local obj = rbxl_safe_instance(className)
-            if obj then instances[ref] = obj end
-        end
-    end
-
-    -- Apply Name first, before parenting, where possible.
-    for _, prop in ipairs(model.properties) do
-        if prop.name == "Name" then
-            for i, ref in ipairs(prop.refs) do
-                local obj=instances[ref]; local v=prop.values[i]
-                if obj and type(v)=="string" and v~="" then
-                    pcall(function() obj.Name=v end)
-                end
-            end
-        end
-    end
-
-    -- Then hierarchy.
-    for _, pair in ipairs(model.parentPairs) do
-        local child = instances[pair.child]
-        local parent = instances[pair.parent]
-        if child then
-            if parent then
-                pcall(function() child.Parent = parent end)
-            else
-                -- -1 is the DataModel root in a place.
-                if not model.refService[pair.child] then
-                    roots[#roots+1] = child
-                end
-            end
-        end
-    end
-
-    -- Apply a safe subset of simple properties after parenting.
-    for _, prop in ipairs(model.properties) do
-        if prop.name ~= "Name" then
-            for i, ref in ipairs(prop.refs) do
-                local obj=instances[ref]; local v=prop.values[i]
-                if obj and v ~= nil then
-                    local ok = pcall(function()
-                        if prop.name == "Anchored" and type(v)=="boolean" then obj.Anchored=v
-                        elseif prop.name == "CanCollide" and type(v)=="boolean" then obj.CanCollide=v
-                        elseif prop.name == "Transparency" and type(v)=="number" then obj.Transparency=v
-                        elseif prop.name == "Reflectance" and type(v)=="number" then obj.Reflectance=v
-                        elseif prop.name == "Size" and type(v)=="table" and v.x then obj.Size=Vector3.new(v.x,v.y,v.z)
-                        elseif prop.name == "Position" and type(v)=="table" and v.x then obj.Position=Vector3.new(v.x,v.y,v.z)
-                        elseif prop.name == "Color" and type(v)=="table" and v.r then obj.Color=Color3.new(v.r,v.g,v.b)
-                        elseif prop.name == "BrickColor" and type(v)=="number" then obj.BrickColor=BrickColor.new(v)
-                    end)
-                end
-            end
-        end
-    end
-
-    return instances, roots
-end
-
-local function loadRBXLBinaryBeta(fileInfo)
-    local data = safeReadFile(fileInfo.path)
-    if not data or #data == 0 then return false, "RBXL BETA: readfile gagal" end
-
-    local parsed, err = rbxl_decode_chunks(data)
-    if not parsed then return false, "RBXL BETA: "..tostring(err) end
-
-    local model = {
-        classes={}, refClass={}, refService={}, refOrder={},
-        parentPairs={}, properties={}, unsupportedProps={}
-    }
-
-    for _, ch in ipairs(parsed.chunks) do
-        if ch.name == "INST" then
-            local ok, e = rbxl_parse_inst(ch.data, model)
-            if not ok then return false, "RBXL BETA: INST gagal: "..tostring(e) end
-        elseif ch.name == "PROP" then
-            local ok, e = rbxl_parse_prop(ch.data, model)
-            if not ok then return false, "RBXL BETA: PROP gagal: "..tostring(e) end
-        elseif ch.name == "PRNT" then
-            local b = Buffer(ch.data, false)
-            local ver = string.byte(b:read())
-            local count = b:readNumber("<I4")
-            if ver ~= 0 or count > RBXL_BETA.maxInstances then return false, "RBXL BETA: PRNT header invalid" end
-            local raw = b:read(count*4)
-            local children = rbxl_ref_array(raw,count)
-            raw = b:read(count*4)
-            local parents = rbxl_ref_array(raw,count)
-            for i=1,count do model.parentPairs[#model.parentPairs+1]={child=children[i],parent=parents[i]} end
-        end
-    end
-
-    local instances, roots = rbxl_materialize(model)
-    local count = 0
-    for _, obj in ipairs(roots) do
-        pcall(function()
-            local target = SVC_MAP[obj.ClassName] or workspace
-            obj.Parent = target
-            injectAllScripts(obj, {})
-            ApplyStudioLiteProperties(obj)
-            LoadAssetsToSLServer(obj)
-            count=count+1
-        end)
-    end
-
-    if count == 0 then
-        return false, string.format("RBXL BETA parsed %d refs tetapi tidak ada root object", parsed.instanceCount or 0)
-    end
-
-    local unsupported = #model.unsupportedProps
-    return true, string.format(
-        "RBXL BETA loaded • %d root • %d refs • %d unsupported props",
-        count, parsed.instanceCount or 0, unsupported
-    )
-end
-
--- RBXL/RBXLX dispatcher.
-local function loadRBXL(fileInfo, sourceMap)
-    local data = safeReadFile(fileInfo.path)
-    if not data or #data == 0 then
-        return false, "RBXL gagal: readfile gagal"
-    end
-
-    -- Binary place/model files start with <roblox!; XML files start with
-    -- <roblox>. The binary beta parser is intentionally selected only for
-    -- the binary signature.
-    if data:sub(1,8) == "<roblox!" then
-        return loadRBXLBinaryBeta(fileInfo)
-    end
-
-    -- RBXLX can still use the environment's local asset bridge.
-    local attempts = {}
-    if InsertService and InsertService.LoadLocalAsset then
-        table.insert(attempts, function()
-            return InsertService:LoadLocalAsset(fileInfo.path)
-        end)
-    end
-    if getcustomasset then
-        table.insert(attempts, function()
-            local asset = getcustomasset(fileInfo.path)
-            if not asset then return nil end
-            return game:GetObjects(asset)
-        end)
-    end
-
-    for _, loader in ipairs(attempts) do
-        local ok, result = pcall(loader)
-        if ok then
-            local objects = normalizeLoadedObjects(result)
-            if #objects > 0 then
-                local count = insertObjects(objects, true, sourceMap or {})
-                if count > 0 then
-                    return true, string.format("RBXLX berhasil dimuat • %d object(s)", count)
-                end
-            end
-        end
-    end
-
-    return false, "RBXLX/RBXL loader gagal"
-end
+local function safeReadFile(p) if not readfile then return nil end; local ok, d = pcall(readfile, p); return ok and d or nil end
 
 local function loadFile(fileInfo)
     local isRbxl = fileInfo.ftype == "RBXL"
     local data = safeReadFile(fileInfo.path)
-    if not data or #data == 0 then return false, "readfile gagal: " .. tostring(fileInfo.path) end
+    if not data or #data == 0 then return false, "readfile gagal" end
 
+    -- RBXL BETA ENGINE: decode the binary place directly instead of passing
+    -- the raw .rbxl bytes to game:GetObjects().
     if isRbxl then
-        return loadRBXL(fileInfo, {})
+        local ok, parsedOrErr, err = pcall(parseRBXLBinary, data)
+        if not ok then return false, "RBXL parser crash: " .. tostring(parsedOrErr) end
+        if not parsedOrErr then return false, tostring(err or "RBXL parser gagal") end
+        local parsed = parsedOrErr
+        local folderOk, folderOrErr = pcall(function()
+            return createRBXLInstances(parsed, (fileInfo.name or "RBXL"):gsub("%.rbxl$", ""))
+        end)
+        if not folderOk or not folderOrErr then
+            return false, "RBXL instance builder gagal: " .. tostring(folderOrErr)
+        end
+        local folder = folderOrErr
+        folder.Parent = workspace
+        local count = #folder:GetDescendants()
+        return true, string.format("RBXL BETA: %d object(s) imported", count)
     end
 
     local sourceMap = {}
@@ -983,20 +647,17 @@ local function loadFile(fileInfo)
         local ok1, aid = pcall(getcustomasset, fileInfo.path)
         if ok1 and aid then
             local ok2, objs = pcall(function() return game:GetObjects(aid) end)
-            if ok2 and objs and #objs > 0 then
-                return true, insertObjects(objs, false, sourceMap) .. " object(s) loaded"
-            end
+            if ok2 and objs and #objs > 0 then return true, insertObjects(objs, false, sourceMap) .. " object(s) loaded" end
         end
     end
 
     local ok3, o3 = pcall(function() return game:GetObjects("rbxasset://" .. fileInfo.path) end)
-    if ok3 and o3 and #o3 > 0 then
-        return true, insertObjects(o3, false, sourceMap) .. " object(s) loaded"
-    end
+    if ok3 and o3 and #o3 > 0 then return true, insertObjects(o3, false, sourceMap) .. " object(s) loaded" end
 
-    return false, "Semua metode RBXM loader gagal"
+    return false, "Semua metode load gagal"
 end
 
+--                                                                        
 -- FILE SCANNER
 --                                                                        
 local function safeListFiles(p) if not listfiles then return nil end; local ok, f = pcall(listfiles, p); return ok and f or nil end
@@ -1035,12 +696,11 @@ end
 --                                                                        
 -- DESTROY OLD UI
 --                                                                        
-if CoreDest:FindFirstChild("HyazImporterUI") then
-    CoreDest:FindFirstChild("HyazImporterUI"):Destroy()
-end
+if CoreDest:FindFirstChild("HyazImporterUI") then CoreDest:FindFirstChild("HyazImporterUI"):Destroy() end
+if CoreDest:FindFirstChild("HyazImporterUI") then CoreDest:FindFirstChild("HyazImporterUI"):Destroy() end
 
 local UI = Instance.new("ScreenGui", CoreDest)
-UI.Name = "HyazImporterUI"; UI.ResetOnSpawn = false; UI.DisplayOrder = 100; UI.IgnoreGuiInset = true; UI.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+UI.Name = "HyazImporterUI"; UI.ResetOnSpawn = false; UI.DisplayOrder = 100; UI.IgnoreGuiInset = true
 
 -- Persistent hacker atmosphere: the green tint remains after the loading screen closes.
 local HackerAtmosphere = Instance.new("Frame", UI)
@@ -1357,398 +1017,350 @@ RunService.RenderStepped:Connect(function(deltaTime)
 end)
 
 --                                                                        
--- ============================================================================
--- HYAZ IMPORTER UI
--- Structured layout / responsive sizing / no-overlap card system
--- ============================================================================
+-- FLOATING TOGGLE BUTTON WITH VECTOR CHEVRON ICON
+--                                                                        
+local ToggleFrame = Instance.new("Frame", UI)
+ToggleFrame.Name = "ToggleFrame"
+ToggleFrame.Size = UDim2.new(0, 36, 0, 36)
+-- Keep the only toggle directly below the Roblox menu.
+ToggleFrame.Position = UDim2.new(0, 8, 0, 48)
+ToggleFrame.BackgroundColor3 = Color3.fromRGB(30, 7, 12)
+ToggleFrame.BackgroundTransparency = 0.08
+ToggleFrame.BorderSizePixel = 0
+ToggleFrame.Active = true
+
+local ToggleCorner = Instance.new("UICorner", ToggleFrame)
+ToggleCorner.CornerRadius = UDim.new(0, 10)
+
+local ToggleGrad = Instance.new("UIGradient", ToggleFrame)
+ToggleGrad.Color = ColorSequence.new({
+    ColorSequenceKeypoint.new(0, Color3.fromRGB(70, 10, 20)),
+    ColorSequenceKeypoint.new(0.5, Color3.fromRGB(175, 18, 35)),
+    ColorSequenceKeypoint.new(1, Color3.fromRGB(24, 6, 11))
+})
+ToggleGrad.Rotation = 45
+registerGradientAnimation(ToggleGrad, 40, "rotate")
+
+local ToggleStroke = Instance.new("UIStroke", ToggleFrame)
+ToggleStroke.Thickness = 1.2
+ToggleStroke.Color = Color3.fromRGB(255, 105, 115)
+ToggleStroke.Transparency = 0.18
+
+local ToggleIcon = Instance.new("ImageLabel", ToggleFrame)
+ToggleIcon.Size = UDim2.new(0, 20, 0, 20)
+ToggleIcon.Position = UDim2.new(0.5, -10, 0.5, -10)
+ToggleIcon.BackgroundTransparency = 1
+ToggleIcon.Image = ICONS.CHEVRON_RIGHT
+ToggleIcon.ImageColor3 = Color3.fromRGB(255, 190, 195)
+
+local ToggleBtn = Instance.new("TextButton", ToggleFrame)
+ToggleBtn.Size = UDim2.new(1, 0, 1, 0)
+ToggleBtn.BackgroundTransparency = 1
+ToggleBtn.Text = ""
+
+-- Dragging System Toggle Button
+local tDragToggle, tDragStart, tStartPos
+ToggleFrame.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        tDragToggle = true; tDragStart = input.Position; tStartPos = ToggleFrame.Position
+    end
+end)
+
+UserInputService.InputChanged:Connect(function(input)
+    if tDragToggle and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+        local delta = input.Position - tDragStart
+        ToggleFrame.Position = UDim2.new(tStartPos.X.Scale, tStartPos.X.Offset + delta.X, tStartPos.Y.Scale, tStartPos.Y.Offset + delta.Y)
+    end
+end)
+
+UserInputService.InputEnded:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        tDragToggle = false
+    end
+end)
+
+-- MAIN CONTAINER
+-- Modern compact red/black UI redesign. Core logic below remains unchanged.
+-- LoadingScreen above is intentionally kept functionally intact.
 
 local Theme = {
-    bg          = Color3.fromRGB(8, 9, 14),
-    panel       = Color3.fromRGB(13, 15, 22),
-    panel2      = Color3.fromRGB(17, 19, 28),
-    panel3      = Color3.fromRGB(22, 24, 34),
-    accent      = Color3.fromRGB(245, 36, 52),
-    accentDark  = Color3.fromRGB(125, 20, 30),
-    accentSoft  = Color3.fromRGB(255, 105, 115),
-    text        = Color3.fromRGB(245, 246, 250),
-    muted       = Color3.fromRGB(145, 149, 162),
-    border      = Color3.fromRGB(55, 31, 38),
-    success     = Color3.fromRGB(72, 190, 118),
-    danger      = Color3.fromRGB(255, 75, 85),
-    info        = Color3.fromRGB(70, 120, 210),
+    bg = Color3.fromRGB(8, 9, 14),
+    panel = Color3.fromRGB(13, 15, 22),
+    panel2 = Color3.fromRGB(17, 19, 28),
+    panel3 = Color3.fromRGB(22, 24, 34),
+    accent = Color3.fromRGB(245, 36, 52),
+    accentDark = Color3.fromRGB(125, 20, 30),
+    accentSoft = Color3.fromRGB(255, 105, 115),
+    text = Color3.fromRGB(245, 246, 250),
+    muted = Color3.fromRGB(145, 149, 162),
+    border = Color3.fromRGB(55, 31, 38),
+    success = Color3.fromRGB(245, 36, 52),
+    danger = Color3.fromRGB(255, 75, 85),
 }
 
 local function round(obj, radius)
-    local c = Instance.new("UICorner")
+    local c = Instance.new("UICorner", obj)
     c.CornerRadius = UDim.new(0, radius or 8)
-    c.Parent = obj
     return c
 end
 
 local function stroke(obj, color, thickness, transparency)
-    local s = Instance.new("UIStroke")
+    local s = Instance.new("UIStroke", obj)
     s.Color = color or Theme.border
     s.Thickness = thickness or 1
     s.Transparency = transparency == nil and 0 or transparency
-    s.Parent = obj
     return s
 end
 
 local function padding(obj, top, right, bottom, left)
-    local p = Instance.new("UIPadding")
+    local p = Instance.new("UIPadding", obj)
     p.PaddingTop = UDim.new(0, top or 0)
     p.PaddingRight = UDim.new(0, right or 0)
     p.PaddingBottom = UDim.new(0, bottom or 0)
     p.PaddingLeft = UDim.new(0, left or 0)
-    p.Parent = obj
     return p
 end
 
 local function addHover(button, target, normal, hover)
     button.MouseEnter:Connect(function()
-        TweenService:Create(target, TweenInfo.new(0.12, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+        TweenService:Create(target, TweenInfo.new(0.14, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
             BackgroundColor3 = hover
         }):Play()
     end)
     button.MouseLeave:Connect(function()
-        TweenService:Create(target, TweenInfo.new(0.12, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+        TweenService:Create(target, TweenInfo.new(0.14, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
             BackgroundColor3 = normal
         }):Play()
     end)
 end
 
--- Reuse the ScreenGui created by the loading-screen section above.
--- This keeps the loading animation and the main UI in one hierarchy.
 local UI = UI
 
--- --------------------------------------------------------------------------
--- Responsive scale
--- --------------------------------------------------------------------------
-local UIScale = Instance.new("UIScale")
-UIScale.Scale = 1
-UIScale.Parent = UI
-
-local function updateUIScale()
-    local camera = workspace.CurrentCamera
-    if not camera then return end
-
-    local vp = camera.ViewportSize
-    local sx = vp.X / 440
-    local sy = vp.Y / 520
-
-    -- Keep the desktop size at 1.0 while preventing the window from
-    -- becoming larger than the available mobile viewport.
-    UIScale.Scale = math.clamp(math.min(sx, sy), 0.78, 1)
-end
-
-updateUIScale()
-if workspace.CurrentCamera then
-    workspace.CurrentCamera:GetPropertyChangedSignal("ViewportSize"):Connect(updateUIScale)
-end
-
--- --------------------------------------------------------------------------
 -- Floating toggle
--- --------------------------------------------------------------------------
-local ToggleFrame = Instance.new("Frame")
+local ToggleFrame = Instance.new("Frame", UI)
 ToggleFrame.Name = "ToggleFrame"
-ToggleFrame.Size = UDim2.fromOffset(36, 36)
-ToggleFrame.Position = UDim2.fromOffset(10, 50)
+ToggleFrame.Size = UDim2.new(0, 34, 0, 34)
+ToggleFrame.Position = UDim2.new(0, 9, 0, 45)
 ToggleFrame.BackgroundColor3 = Color3.fromRGB(25, 12, 16)
 ToggleFrame.BorderSizePixel = 0
 ToggleFrame.Active = true
-ToggleFrame.ZIndex = 50
-ToggleFrame.Parent = UI
 round(ToggleFrame, 10)
 stroke(ToggleFrame, Theme.accent, 1, 0.25)
 
-local ToggleGrad = Instance.new("UIGradient")
+local ToggleGrad = Instance.new("UIGradient", ToggleFrame)
 ToggleGrad.Color = ColorSequence.new({
     ColorSequenceKeypoint.new(0, Color3.fromRGB(65, 13, 22)),
     ColorSequenceKeypoint.new(0.5, Color3.fromRGB(31, 13, 18)),
     ColorSequenceKeypoint.new(1, Color3.fromRGB(18, 9, 13))
 })
 ToggleGrad.Rotation = 35
-ToggleGrad.Parent = ToggleFrame
 registerGradientAnimation(ToggleGrad, 12, "rotate")
 
-local ToggleIcon = Instance.new("ImageLabel")
-ToggleIcon.Size = UDim2.fromOffset(16, 16)
+local ToggleIcon = Instance.new("ImageLabel", ToggleFrame)
+ToggleIcon.Size = UDim2.new(0, 16, 0, 16)
 ToggleIcon.Position = UDim2.new(0.5, -8, 0.5, -8)
 ToggleIcon.BackgroundTransparency = 1
 ToggleIcon.Image = ICONS.CHEVRON_RIGHT
 ToggleIcon.ImageColor3 = Theme.accentSoft
-ToggleIcon.ZIndex = 51
-ToggleIcon.Parent = ToggleFrame
 
-local ToggleBtn = Instance.new("TextButton")
-ToggleBtn.Size = UDim2.fromScale(1, 1)
+local ToggleBtn = Instance.new("TextButton", ToggleFrame)
+ToggleBtn.Size = UDim2.new(1, 0, 1, 0)
 ToggleBtn.BackgroundTransparency = 1
 ToggleBtn.Text = ""
-ToggleBtn.ZIndex = 52
-ToggleBtn.Parent = ToggleFrame
 
 do
-    local dragging, dragStart, startPos
-
+    local tDragToggle, tDragStart, tStartPos
     ToggleFrame.InputBegan:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1
-            or input.UserInputType == Enum.UserInputType.Touch then
-            dragging = true
-            dragStart = input.Position
-            startPos = ToggleFrame.Position
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            tDragToggle = true
+            tDragStart = input.Position
+            tStartPos = ToggleFrame.Position
         end
     end)
-
     UserInputService.InputChanged:Connect(function(input)
-        if dragging and (
-            input.UserInputType == Enum.UserInputType.MouseMovement
-            or input.UserInputType == Enum.UserInputType.Touch
-        ) then
-            local delta = input.Position - dragStart
-            ToggleFrame.Position = UDim2.new(
-                startPos.X.Scale,
-                startPos.X.Offset + delta.X,
-                startPos.Y.Scale,
-                startPos.Y.Offset + delta.Y
-            )
+        if tDragToggle and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+            local delta = input.Position - tDragStart
+            ToggleFrame.Position = UDim2.new(tStartPos.X.Scale, tStartPos.X.Offset + delta.X, tStartPos.Y.Scale, tStartPos.Y.Offset + delta.Y)
         end
     end)
-
     UserInputService.InputEnded:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1
-            or input.UserInputType == Enum.UserInputType.Touch then
-            dragging = false
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            tDragToggle = false
         end
     end)
 end
 
--- --------------------------------------------------------------------------
--- Main window
--- --------------------------------------------------------------------------
-local Main = Instance.new("Frame")
+-- MAIN WINDOW
+local Main = Instance.new("Frame", UI)
 Main.Name = "MainFrame"
-Main.Size = UDim2.fromOffset(400, 480)
-Main.Position = UDim2.new(0.5, -200, 0.5, -240)
+Main.Size = UDim2.new(0, 350, 0, 390)
+Main.Position = UDim2.new(0.5, -175, 0.5, -195)
 Main.BackgroundColor3 = Theme.bg
 Main.BorderSizePixel = 0
 Main.ClipsDescendants = true
 Main.Visible = true
-Main.ZIndex = 10
-Main.Parent = UI
-round(Main, 16)
+round(Main, 14)
 stroke(Main, Theme.accentDark, 1, 0.08)
 
-local MainGlow = Instance.new("UIGradient")
+local MainGlow = Instance.new("UIGradient", Main)
 MainGlow.Color = ColorSequence.new({
     ColorSequenceKeypoint.new(0, Color3.fromRGB(20, 13, 19)),
     ColorSequenceKeypoint.new(0.55, Color3.fromRGB(9, 10, 15)),
     ColorSequenceKeypoint.new(1, Color3.fromRGB(13, 9, 13))
 })
 MainGlow.Rotation = 135
-MainGlow.Parent = Main
 
--- --------------------------------------------------------------------------
--- Header
--- --------------------------------------------------------------------------
-local TitleBar = Instance.new("Frame")
-TitleBar.Name = "Header"
-TitleBar.Size = UDim2.new(1, 0, 0, 58)
+-- HEADER
+local TitleBar = Instance.new("Frame", Main)
+TitleBar.Size = UDim2.new(1, 0, 0, 52)
 TitleBar.BackgroundColor3 = Theme.panel2
 TitleBar.BorderSizePixel = 0
-TitleBar.Active = true
-TitleBar.ZIndex = 20
-TitleBar.Parent = Main
+TitleBar.ClipsDescendants = true
 
-local HeaderLine = Instance.new("Frame")
+local HeaderLine = Instance.new("Frame", TitleBar)
 HeaderLine.Size = UDim2.new(1, 0, 0, 1)
 HeaderLine.Position = UDim2.new(0, 0, 1, -1)
 HeaderLine.BackgroundColor3 = Theme.border
 HeaderLine.BorderSizePixel = 0
-HeaderLine.ZIndex = 21
-HeaderLine.Parent = TitleBar
 
-local TitleIconWrap = Instance.new("Frame")
-TitleIconWrap.Size = UDim2.fromOffset(34, 34)
-TitleIconWrap.Position = UDim2.fromOffset(11, 12)
+local TitleIconWrap = Instance.new("Frame", TitleBar)
+TitleIconWrap.Size = UDim2.new(0, 31, 0, 31)
+TitleIconWrap.Position = UDim2.new(0, 10, 0.5, -15.5)
 TitleIconWrap.BackgroundColor3 = Color3.fromRGB(45, 12, 20)
 TitleIconWrap.BorderSizePixel = 0
-TitleIconWrap.ZIndex = 22
-TitleIconWrap.Parent = TitleBar
-round(TitleIconWrap, 10)
+round(TitleIconWrap, 9)
 stroke(TitleIconWrap, Theme.accent, 1, 0.35)
 
-local TitleIcon = Instance.new("ImageLabel")
-TitleIcon.Size = UDim2.fromOffset(18, 18)
-TitleIcon.Position = UDim2.new(0.5, -9, 0.5, -9)
+local TitleIcon = Instance.new("ImageLabel", TitleIconWrap)
+TitleIcon.Size = UDim2.new(0, 17, 0, 17)
+TitleIcon.Position = UDim2.new(0.5, -8.5, 0.5, -8.5)
 TitleIcon.BackgroundTransparency = 1
 TitleIcon.Image = ICONS.PACKAGE
 TitleIcon.ImageColor3 = Theme.accent
-TitleIcon.ZIndex = 23
-TitleIcon.Parent = TitleIconWrap
 
-local TitleText = Instance.new("TextLabel")
-TitleText.Size = UDim2.fromOffset(135, 18)
-TitleText.Position = UDim2.fromOffset(55, 8)
+local TitleText = Instance.new("TextLabel", TitleBar)
+TitleText.Size = UDim2.new(0, 150, 0, 18)
+TitleText.Position = UDim2.new(0, 49, 0, 7)
 TitleText.BackgroundTransparency = 1
 TitleText.Text = "HYAZ IMPORTER"
 TitleText.TextColor3 = Theme.text
 TitleText.Font = Enum.Font.GothamBold
 TitleText.TextSize = 13
 TitleText.TextXAlignment = Enum.TextXAlignment.Left
-TitleText.ZIndex = 22
-TitleText.Parent = TitleBar
 
-local VersionBadge = Instance.new("Frame")
-VersionBadge.Size = UDim2.fromOffset(42, 18)
-VersionBadge.Position = UDim2.fromOffset(55, 31)
+local VersionBadge = Instance.new("Frame", TitleBar)
+VersionBadge.Size = UDim2.new(0, 40, 0, 18)
+VersionBadge.Position = UDim2.new(0, 158, 0, 8)
 VersionBadge.BackgroundColor3 = Color3.fromRGB(45, 12, 19)
 VersionBadge.BorderSizePixel = 0
-VersionBadge.ZIndex = 22
-VersionBadge.Parent = TitleBar
 round(VersionBadge, 8)
 stroke(VersionBadge, Theme.accentDark, 1, 0.25)
 
-local VersionText = Instance.new("TextLabel")
-VersionText.Size = UDim2.fromScale(1, 1)
+local VersionText = Instance.new("TextLabel", VersionBadge)
+VersionText.Size = UDim2.new(1, 0, 1, 0)
 VersionText.BackgroundTransparency = 1
 VersionText.Text = "v62.0"
 VersionText.TextColor3 = Theme.accentSoft
 VersionText.Font = Enum.Font.GothamBold
 VersionText.TextSize = 8
-VersionText.ZIndex = 23
-VersionText.Parent = VersionBadge
 
-local Subtitle = Instance.new("TextLabel")
-Subtitle.Size = UDim2.new(0, 155, 0, 14)
-Subtitle.Position = UDim2.fromOffset(103, 33)
+local Subtitle = Instance.new("TextLabel", TitleBar)
+Subtitle.Size = UDim2.new(0, 190, 0, 14)
+Subtitle.Position = UDim2.new(0, 49, 0, 28)
 Subtitle.BackgroundTransparency = 1
-Subtitle.Text = "RBXM / RBXL  •  BETA"
+Subtitle.Text = "RBXM / RBXL  •  IMPORTER READY"
 Subtitle.TextColor3 = Theme.muted
 Subtitle.Font = Enum.Font.GothamMedium
 Subtitle.TextSize = 7
 Subtitle.TextXAlignment = Enum.TextXAlignment.Left
-Subtitle.ZIndex = 22
-Subtitle.Parent = TitleBar
 
-local StatusWrap = Instance.new("Frame")
-StatusWrap.Size = UDim2.fromOffset(66, 26)
-StatusWrap.Position = UDim2.new(1, -158, 0.5, -13)
+local StatusWrap = Instance.new("Frame", TitleBar)
+StatusWrap.Size = UDim2.new(0, 67, 0, 28)
+StatusWrap.Position = UDim2.new(1, -142, 0.5, -14)
 StatusWrap.BackgroundColor3 = Color3.fromRGB(24, 14, 18)
 StatusWrap.BorderSizePixel = 0
-StatusWrap.ZIndex = 22
-StatusWrap.Parent = TitleBar
 round(StatusWrap, 8)
-stroke(StatusWrap, Theme.border, 1, 0.2)
 
-local StatusDot = Instance.new("Frame")
-StatusDot.Size = UDim2.fromOffset(6, 6)
-StatusDot.Position = UDim2.fromOffset(8, 10)
-StatusDot.BackgroundColor3 = Theme.success
+local StatusDot = Instance.new("Frame", StatusWrap)
+StatusDot.Size = UDim2.new(0, 6, 0, 6)
+StatusDot.Position = UDim2.new(0, 8, 0.5, -3)
+StatusDot.BackgroundColor3 = Theme.accent
 StatusDot.BorderSizePixel = 0
-StatusDot.ZIndex = 23
-StatusDot.Parent = StatusWrap
 round(StatusDot, 3)
 
-local StatusText = Instance.new("TextLabel")
+local StatusText = Instance.new("TextLabel", StatusWrap)
 StatusText.Size = UDim2.new(1, -20, 1, 0)
-StatusText.Position = UDim2.fromOffset(18, 0)
+StatusText.Position = UDim2.new(0, 18, 0, 0)
 StatusText.BackgroundTransparency = 1
 StatusText.Text = "READY"
-StatusText.TextColor3 = Theme.success
+StatusText.TextColor3 = Theme.accent
 StatusText.Font = Enum.Font.GothamBold
 StatusText.TextSize = 8
 StatusText.TextXAlignment = Enum.TextXAlignment.Left
-StatusText.ZIndex = 23
-StatusText.Parent = StatusWrap
 
-local MinBtn = Instance.new("Frame")
-MinBtn.Size = UDim2.fromOffset(28, 28)
-MinBtn.Position = UDim2.new(1, -86, 0.5, -14)
-MinBtn.BackgroundColor3 = Theme.panel3
-MinBtn.BorderSizePixel = 0
-MinBtn.ZIndex = 22
-MinBtn.Parent = TitleBar
-round(MinBtn, 8)
-stroke(MinBtn, Theme.border, 1, 0.2)
-
-local MinIcon = Instance.new("ImageLabel")
-MinIcon.Size = UDim2.fromOffset(13, 13)
-MinIcon.Position = UDim2.new(0.5, -6.5, 0.5, -6.5)
-MinIcon.BackgroundTransparency = 1
-MinIcon.Image = ICONS.MINIMIZE
-MinIcon.ImageColor3 = Theme.accentSoft
-MinIcon.ZIndex = 23
-MinIcon.Parent = MinBtn
-
-local MinClick = Instance.new("TextButton")
-MinClick.Size = UDim2.fromScale(1, 1)
-MinClick.BackgroundTransparency = 1
-MinClick.Text = ""
-MinClick.ZIndex = 24
-MinClick.Parent = MinBtn
-
-local CloseBtn = Instance.new("Frame")
-CloseBtn.Size = UDim2.fromOffset(28, 28)
-CloseBtn.Position = UDim2.new(1, -48, 0.5, -14)
+local CloseBtn = Instance.new("Frame", TitleBar)
+CloseBtn.Size = UDim2.new(0, 28, 0, 28)
+CloseBtn.Position = UDim2.new(1, -38, 0.5, -14)
 CloseBtn.BackgroundColor3 = Color3.fromRGB(42, 12, 18)
 CloseBtn.BorderSizePixel = 0
-CloseBtn.ZIndex = 22
-CloseBtn.Parent = TitleBar
 round(CloseBtn, 8)
 stroke(CloseBtn, Theme.accentDark, 1, 0.2)
 
-local CloseIcon = Instance.new("TextLabel")
-CloseIcon.Size = UDim2.fromScale(1, 1)
+local CloseIcon = Instance.new("TextLabel", CloseBtn)
+CloseIcon.Size = UDim2.new(1, 0, 1, 0)
 CloseIcon.BackgroundTransparency = 1
 CloseIcon.Text = "×"
 CloseIcon.TextColor3 = Theme.accentSoft
 CloseIcon.Font = Enum.Font.GothamBold
 CloseIcon.TextSize = 18
-CloseIcon.ZIndex = 23
-CloseIcon.Parent = CloseBtn
 
-local CloseClick = Instance.new("TextButton")
-CloseClick.Size = UDim2.fromScale(1, 1)
+local CloseClick = Instance.new("TextButton", CloseBtn)
+CloseClick.Size = UDim2.new(1, 0, 1, 0)
 CloseClick.BackgroundTransparency = 1
 CloseClick.Text = ""
-CloseClick.ZIndex = 24
-CloseClick.Parent = CloseBtn
 
-addHover(CloseClick, CloseBtn, Color3.fromRGB(42, 12, 18), Color3.fromRGB(78, 18, 29))
+local MinBtn = Instance.new("Frame", TitleBar)
+MinBtn.Size = UDim2.new(0, 28, 0, 28)
+MinBtn.Position = UDim2.new(1, -74, 0.5, -14)
+MinBtn.BackgroundColor3 = Theme.panel3
+MinBtn.BorderSizePixel = 0
+round(MinBtn, 8)
+stroke(MinBtn, Theme.border, 1, 0.2)
+
+local MinIcon = Instance.new("ImageLabel", MinBtn)
+MinIcon.Size = UDim2.new(0, 13, 0, 13)
+MinIcon.Position = UDim2.new(0.5, -6.5, 0.5, -6.5)
+MinIcon.BackgroundTransparency = 1
+MinIcon.Image = ICONS.MINIMIZE
+MinIcon.ImageColor3 = Theme.accentSoft
+
+local MinClick = Instance.new("TextButton", MinBtn)
+MinClick.Size = UDim2.new(1, 0, 1, 0)
+MinClick.BackgroundTransparency = 1
+MinClick.Text = ""
+
+addHover(CloseClick, CloseBtn, Color3.fromRGB(42, 12, 18), Color3.fromRGB(75, 18, 28))
 addHover(MinClick, MinBtn, Theme.panel3, Color3.fromRGB(37, 30, 37))
 
--- Header drag only; controls remain usable.
-do
-    local dragging, dragStart, startPos
-
+-- DRAGGING
+ do
+    local dragToggle, dragStart, startPos
     TitleBar.InputBegan:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1
-            or input.UserInputType == Enum.UserInputType.Touch then
-            dragging = true
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            dragToggle = true
             dragStart = input.Position
             startPos = Main.Position
         end
     end)
-
     UserInputService.InputChanged:Connect(function(input)
-        if dragging and (
-            input.UserInputType == Enum.UserInputType.MouseMovement
-            or input.UserInputType == Enum.UserInputType.Touch
-        ) then
+        if dragToggle and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
             local delta = input.Position - dragStart
-            Main.Position = UDim2.new(
-                startPos.X.Scale,
-                startPos.X.Offset + delta.X,
-                startPos.Y.Scale,
-                startPos.Y.Offset + delta.Y
-            )
+            Main.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
         end
     end)
-
     UserInputService.InputEnded:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1
-            or input.UserInputType == Enum.UserInputType.Touch then
-            dragging = false
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            dragToggle = false
         end
     end)
 end
@@ -1757,342 +1369,240 @@ local function toggleMain()
     Main.Visible = not Main.Visible
     ToggleIcon.Image = Main.Visible and ICONS.CHEVRON_RIGHT or ICONS.CHEVRON_LEFT
 end
-
 ToggleBtn.MouseButton1Click:Connect(toggleMain)
 
--- --------------------------------------------------------------------------
--- Body: sidebar + content
--- --------------------------------------------------------------------------
-local Body = Instance.new("Frame")
-Body.Name = "Body"
-Body.Size = UDim2.new(1, -20, 1, -128)
-Body.Position = UDim2.fromOffset(10, 68)
+-- BODY
+local Body = Instance.new("Frame", Main)
+Body.Size = UDim2.new(1, -16, 1, -66)
+Body.Position = UDim2.new(0, 8, 0, 58)
 Body.BackgroundTransparency = 1
-Body.ZIndex = 11
-Body.Parent = Main
 
--- Sidebar
-local Sidebar = Instance.new("Frame")
-Sidebar.Name = "Sidebar"
-Sidebar.Size = UDim2.new(0, 108, 1, 0)
-Sidebar.Position = UDim2.fromOffset(0, 0)
+-- LEFT SIDEBAR
+local Sidebar = Instance.new("Frame", Body)
+Sidebar.Size = UDim2.new(0, 102, 1, -8)
+Sidebar.Position = UDim2.new(0, 0, 0, 0)
 Sidebar.BackgroundColor3 = Theme.panel
 Sidebar.BorderSizePixel = 0
-Sidebar.ZIndex = 12
-Sidebar.Parent = Body
-round(Sidebar, 11)
+round(Sidebar, 10)
 stroke(Sidebar, Theme.border, 1, 0.25)
-padding(Sidebar, 10, 7, 10, 7)
 
-local SideTitle = Instance.new("TextLabel")
-SideTitle.Size = UDim2.new(1, 0, 0, 18)
+local SideTitle = Instance.new("TextLabel", Sidebar)
+SideTitle.Size = UDim2.new(1, -16, 0, 18)
+SideTitle.Position = UDim2.new(0, 8, 0, 10)
 SideTitle.BackgroundTransparency = 1
 SideTitle.Text = "CONTROL"
 SideTitle.TextColor3 = Theme.muted
 SideTitle.Font = Enum.Font.GothamBold
 SideTitle.TextSize = 7
 SideTitle.TextXAlignment = Enum.TextXAlignment.Left
-SideTitle.Parent = Sidebar
 
-local ScanBtn = Instance.new("Frame")
-ScanBtn.Size = UDim2.new(1, 0, 0, 40)
-ScanBtn.Position = UDim2.fromOffset(0, 26)
+local ScanBtn = Instance.new("Frame", Sidebar)
+ScanBtn.Size = UDim2.new(1, -14, 0, 40)
+ScanBtn.Position = UDim2.new(0, 7, 0, 34)
 ScanBtn.BackgroundColor3 = Color3.fromRGB(100, 17, 27)
 ScanBtn.BorderSizePixel = 0
-ScanBtn.ZIndex = 13
-ScanBtn.Parent = Sidebar
-round(ScanBtn, 9)
+round(ScanBtn, 8)
 stroke(ScanBtn, Theme.accent, 1, 0.3)
 
-local ScanIcon = Instance.new("ImageLabel")
-ScanIcon.Size = UDim2.fromOffset(14, 14)
-ScanIcon.Position = UDim2.fromOffset(8, 13)
+local ScanIcon = Instance.new("ImageLabel", ScanBtn)
+ScanIcon.Size = UDim2.new(0, 14, 0, 14)
+ScanIcon.Position = UDim2.new(0, 8, 0.5, -7)
 ScanIcon.BackgroundTransparency = 1
 ScanIcon.Image = ICONS.SEARCH
 ScanIcon.ImageColor3 = Color3.fromRGB(255, 225, 228)
-ScanIcon.ZIndex = 14
-ScanIcon.Parent = ScanBtn
 
-local ScanText = Instance.new("TextLabel")
+local ScanText = Instance.new("TextLabel", ScanBtn)
 ScanText.Size = UDim2.new(1, -29, 1, 0)
-ScanText.Position = UDim2.fromOffset(27, 0)
+ScanText.Position = UDim2.new(0, 27, 0, 0)
 ScanText.BackgroundTransparency = 1
 ScanText.Text = "SCAN NOW"
 ScanText.TextColor3 = Theme.text
 ScanText.Font = Enum.Font.GothamBold
 ScanText.TextSize = 8
 ScanText.TextXAlignment = Enum.TextXAlignment.Left
-ScanText.ZIndex = 14
-ScanText.Parent = ScanBtn
 
-local ScanClick = Instance.new("TextButton")
-ScanClick.Size = UDim2.fromScale(1, 1)
+local ScanClick = Instance.new("TextButton", ScanBtn)
+ScanClick.Size = UDim2.new(1, 0, 1, 0)
 ScanClick.BackgroundTransparency = 1
 ScanClick.Text = ""
-ScanClick.ZIndex = 15
-ScanClick.Parent = ScanBtn
 addHover(ScanClick, ScanBtn, Color3.fromRGB(100, 17, 27), Color3.fromRGB(145, 22, 36))
 
-local SideHint = Instance.new("TextLabel")
-SideHint.Size = UDim2.new(1, 0, 0, 30)
-SideHint.Position = UDim2.fromOffset(0, 74)
-SideHint.BackgroundTransparency = 1
-SideHint.Text = "SCAN YOUR WORKSPACE\nFOR RBXM / RBXL FILES\nRBXL BINARY BETA"
-SideHint.TextColor3 = Theme.muted
-SideHint.Font = Enum.Font.Gotham
-SideHint.TextSize = 6
-SideHint.TextWrapped = true
-SideHint.TextXAlignment = Enum.TextXAlignment.Left
-SideHint.Parent = Sidebar
+local ScanHint = Instance.new("TextLabel", Sidebar)
+ScanHint.Size = UDim2.new(1, -14, 0, 30)
+ScanHint.Position = UDim2.new(0, 7, 0, 76)
+ScanHint.BackgroundTransparency = 1
+ScanHint.Text = "MODULES"
+ScanHint.TextColor3 = Theme.muted
+ScanHint.Font = Enum.Font.Gotham
+ScanHint.TextSize = 7
+ScanHint.TextWrapped = true
+ScanHint.TextXAlignment = Enum.TextXAlignment.Center
 
--- Stats panel with fixed row heights (prevents the previous 84px row overflow).
-local StatPanel = Instance.new("Frame")
-StatPanel.Size = UDim2.new(1, 0, 0, 122)
-StatPanel.Position = UDim2.fromOffset(0, 112)
+local StatPanel = Instance.new("Frame", Sidebar)
+StatPanel.Size = UDim2.new(1, -14, 0, 90)
+StatPanel.Position = UDim2.new(0, 7, 0, 166)
 StatPanel.BackgroundColor3 = Theme.panel2
 StatPanel.BorderSizePixel = 0
-StatPanel.Parent = Sidebar
 round(StatPanel, 9)
 stroke(StatPanel, Theme.border, 1, 0.3)
 
 local function makeSideStat(parent, y, label, value, icon)
-    local ico = Instance.new("ImageLabel")
-    ico.Size = UDim2.fromOffset(12, 12)
-    ico.Position = UDim2.fromOffset(8, y + 7)
+    local ico = Instance.new("ImageLabel", parent)
+    ico.Size = UDim2.new(0, 13, 0, 13)
+    ico.Position = UDim2.new(0, 8, 0, y + 1)
     ico.BackgroundTransparency = 1
     ico.Image = icon
     ico.ImageColor3 = Theme.accent
-    ico.Parent = parent
 
-    local lbl = Instance.new("TextLabel")
-    lbl.Size = UDim2.new(1, -42, 0, 26)
-    lbl.Position = UDim2.fromOffset(26, y)
+    local lbl = Instance.new("TextLabel", parent)
+    lbl.Size = UDim2.new(1, -37, 0, 14)
+    lbl.Position = UDim2.new(0, 27, 0, y)
     lbl.BackgroundTransparency = 1
     lbl.Text = label
     lbl.TextColor3 = Theme.muted
     lbl.Font = Enum.Font.GothamMedium
-    lbl.TextSize = 6
+    lbl.TextSize = 7
     lbl.TextXAlignment = Enum.TextXAlignment.Left
-    lbl.Parent = parent
 
-    local val = Instance.new("TextLabel")
-    val.Size = UDim2.fromOffset(22, 26)
-    val.Position = UDim2.new(1, -30, 0, y)
+    local val = Instance.new("TextLabel", parent)
+    val.Size = UDim2.new(0, 20, 0, 14)
+    val.Position = UDim2.new(1, -27, 0, y)
     val.BackgroundTransparency = 1
     val.Text = value
     val.TextColor3 = Theme.accent
     val.Font = Enum.Font.GothamBold
     val.TextSize = 8
     val.TextXAlignment = Enum.TextXAlignment.Right
-    val.Parent = parent
-
     return val
 end
 
-local FilesValue = makeSideStat(StatPanel, 0, "FILES FOUND", "0", ICONS.FOLDER)
-local Divider1 = Instance.new("Frame")
-Divider1.Size = UDim2.new(1, -16, 0, 1)
-Divider1.Position = UDim2.fromOffset(8, 40)
+local FilesValue = makeSideStat(StatPanel, 10, "FILES FOUND", "0", ICONS.FOLDER)
+local Divider1 = Instance.new("Frame", StatPanel)
+Divider1.Size = UDim2.new(1, -18, 0, 1)
+Divider1.Position = UDim2.new(0, 9, 0, 37)
 Divider1.BackgroundColor3 = Theme.border
 Divider1.BorderSizePixel = 0
-Divider1.Parent = StatPanel
-
-local InsertedValue = makeSideStat(StatPanel, 41, "INSERTED", "0", ICONS.CHECK)
-
+local InsertedValue = makeSideStat(StatPanel, 47, "INSERTED", "0", ICONS.CHECK)
 local Divider2 = Divider1:Clone()
-Divider2.Position = UDim2.fromOffset(8, 81)
 Divider2.Parent = StatPanel
+Divider2.Position = UDim2.new(0, 9, 0, 74)
+local FailedValue = makeSideStat(StatPanel, 84, "FAILED", "0", ICONS.ALERT)
 
-local FailedValue = makeSideStat(StatPanel, 82, "FAILED", "0", ICONS.ALERT)
-
-local BrandPanel = Instance.new("Frame")
-BrandPanel.Size = UDim2.new(1, 0, 0, 34)
-BrandPanel.Position = UDim2.new(0, 0, 1, -34)
+local BrandPanel = Instance.new("Frame", Sidebar)
+BrandPanel.Size = UDim2.new(1, -14, 0, 34)
+BrandPanel.Position = UDim2.new(0, 7, 1, -42)
 BrandPanel.BackgroundColor3 = Color3.fromRGB(28, 12, 17)
 BrandPanel.BorderSizePixel = 0
-BrandPanel.Parent = Sidebar
 round(BrandPanel, 8)
 
-local BrandIcon = Instance.new("ImageLabel")
-BrandIcon.Size = UDim2.fromOffset(15, 15)
-BrandIcon.Position = UDim2.fromOffset(8, 9)
+local BrandIcon = Instance.new("ImageLabel", BrandPanel)
+BrandIcon.Size = UDim2.new(0, 15, 0, 15)
+BrandIcon.Position = UDim2.new(0, 8, 0.5, -7.5)
 BrandIcon.BackgroundTransparency = 1
 BrandIcon.Image = ICONS.PACKAGE
 BrandIcon.ImageColor3 = Theme.accent
-BrandIcon.Parent = BrandPanel
 
-local BrandText = Instance.new("TextLabel")
-BrandText.Size = UDim2.new(1, -31, 1, 0)
-BrandText.Position = UDim2.fromOffset(28, 0)
+local BrandText = Instance.new("TextLabel", BrandPanel)
+BrandText.Size = UDim2.new(1, -30, 1, 0)
+BrandText.Position = UDim2.new(0, 28, 0, 0)
 BrandText.BackgroundTransparency = 1
 BrandText.Text = "KING HYAZ"
 BrandText.TextColor3 = Theme.accent
 BrandText.Font = Enum.Font.GothamBold
 BrandText.TextSize = 8
 BrandText.TextXAlignment = Enum.TextXAlignment.Left
-BrandText.Parent = BrandPanel
 
--- Content
-local Content = Instance.new("Frame")
-Content.Name = "Content"
-Content.Size = UDim2.new(1, -116, 1, 0)
-Content.Position = UDim2.fromOffset(116, 0)
+-- RIGHT FILE AREA
+local Content = Instance.new("Frame", Body)
+Content.Size = UDim2.new(1, -110, 1, -8)
+Content.Position = UDim2.new(0, 110, 0, 0)
 Content.BackgroundTransparency = 1
-Content.ZIndex = 12
-Content.Parent = Body
 
--- --------------------------------------------------------------------------
--- Layering fix
--- Roblox ZIndexBehavior = Sibling means child GuiObjects do NOT inherit the
--- ZIndex of their parent.  Main uses ZIndex 10, so content children at the
--- default ZIndex 1 were being rendered BEHIND the black Main background.
--- Keep every visible child above Main while preserving the header/notification
--- layers and give interactive controls a small additional priority.
--- --------------------------------------------------------------------------
-local function normalizeLayer(obj, baseZ)
-    if not obj or not obj:IsA("GuiObject") then return end
-
-    local target = baseZ or 13
-    if obj:IsA("TextButton") or obj:IsA("ImageButton") then
-        target = math.max(target, 15)
-    elseif obj:IsA("TextBox") then
-        target = math.max(target, 14)
-    end
-
-    if obj.ZIndex < target then
-        obj.ZIndex = target
-    end
-end
-
-local function normalizeTree(root, baseZ)
-    for _, obj in ipairs(root:GetDescendants()) do
-        normalizeLayer(obj, baseZ)
-    end
-end
-
--- Normalize the existing main-window layers.
-normalizeTree(Main, 13)
-normalizeTree(TitleBar, 20)
-normalizeTree(Sidebar, 13)
-normalizeTree(Content, 13)
-
--- New file cards and module controls are created later, so keep future
--- descendants correctly layered as well.
-Content.DescendantAdded:Connect(function(obj)
-    task.defer(function()
-        normalizeLayer(obj, 13)
-    end)
-end)
-Sidebar.DescendantAdded:Connect(function(obj)
-    task.defer(function()
-        normalizeLayer(obj, 13)
-    end)
-end)
-
--- Search row
-local SearchBar = Instance.new("Frame")
-SearchBar.Size = UDim2.new(1, -36, 0, 34)
-SearchBar.Position = UDim2.fromOffset(0, 0)
+local SearchBar = Instance.new("Frame", Content)
+SearchBar.Size = UDim2.new(1, -34, 0, 34)
+SearchBar.Position = UDim2.new(0, 0, 0, 0)
 SearchBar.BackgroundColor3 = Theme.panel2
 SearchBar.BorderSizePixel = 0
-SearchBar.Parent = Content
-round(SearchBar, 9)
+round(SearchBar, 8)
 stroke(SearchBar, Theme.border, 1, 0.15)
 
-local SearchIcon = Instance.new("ImageLabel")
-SearchIcon.Size = UDim2.fromOffset(14, 14)
-SearchIcon.Position = UDim2.fromOffset(10, 10)
+local SearchIcon = Instance.new("ImageLabel", SearchBar)
+SearchIcon.Size = UDim2.new(0, 14, 0, 14)
+SearchIcon.Position = UDim2.new(0, 9, 0.5, -7)
 SearchIcon.BackgroundTransparency = 1
 SearchIcon.Image = ICONS.SEARCH
 SearchIcon.ImageColor3 = Theme.muted
-SearchIcon.Parent = SearchBar
 
-local SearchInput = Instance.new("TextBox")
-SearchInput.Size = UDim2.new(1, -40, 1, 0)
-SearchInput.Position = UDim2.fromOffset(34, 0)
+local SearchInput = Instance.new("TextBox", SearchBar)
+SearchInput.Size = UDim2.new(1, -34, 1, 0)
+SearchInput.Position = UDim2.new(0, 31, 0, 0)
 SearchInput.BackgroundTransparency = 1
 SearchInput.Text = ""
-SearchInput.PlaceholderText = "Search files or type a path..."
+SearchInput.PlaceholderText = "Search files..."
 SearchInput.PlaceholderColor3 = Color3.fromRGB(95, 99, 112)
 SearchInput.TextColor3 = Theme.text
 SearchInput.Font = Enum.Font.Gotham
 SearchInput.TextSize = 9
 SearchInput.TextXAlignment = Enum.TextXAlignment.Left
 SearchInput.ClearTextOnFocus = false
-SearchInput.Parent = SearchBar
 
-local SearchClearBtn = Instance.new("TextButton")
-SearchClearBtn.Size = UDim2.fromOffset(28, 28)
-SearchClearBtn.Position = UDim2.new(1, -31, 0, 3)
+local SearchClearBtn = Instance.new("TextButton", Content)
+SearchClearBtn.Size = UDim2.new(0, 26, 0, 26)
+SearchClearBtn.Position = UDim2.new(1, -27, 0, 4)
 SearchClearBtn.BackgroundColor3 = Theme.panel3
 SearchClearBtn.BorderSizePixel = 0
 SearchClearBtn.Text = "×"
 SearchClearBtn.TextColor3 = Theme.muted
 SearchClearBtn.Font = Enum.Font.GothamBold
 SearchClearBtn.TextSize = 13
-SearchClearBtn.ZIndex = 16
-SearchClearBtn.Parent = Content
-round(SearchClearBtn, 8)
+round(SearchClearBtn, 7)
 
--- List header
-local ListHeader = Instance.new("TextLabel")
-ListHeader.Size = UDim2.new(1, 0, 0, 20)
-ListHeader.Position = UDim2.fromOffset(0, 43)
+local ListHeader = Instance.new("TextLabel", Content)
+ListHeader.Size = UDim2.new(1, 0, 0, 18)
+ListHeader.Position = UDim2.new(0, 0, 0, 42)
 ListHeader.BackgroundTransparency = 1
 ListHeader.Text = "WORKSPACE FILES"
 ListHeader.TextColor3 = Theme.muted
 ListHeader.Font = Enum.Font.GothamBold
 ListHeader.TextSize = 7
 ListHeader.TextXAlignment = Enum.TextXAlignment.Left
-ListHeader.Parent = Content
 
--- Scroll list
-local Scroll = Instance.new("ScrollingFrame")
-Scroll.Name = "FileList"
-Scroll.Size = UDim2.new(1, 0, 1, -72)
-Scroll.Position = UDim2.fromOffset(0, 72)
+local Scroll = Instance.new("ScrollingFrame", Content)
+Scroll.Size = UDim2.new(1, 0, 1, -70)
+Scroll.Position = UDim2.new(0, 0, 0, 62)
 Scroll.BackgroundTransparency = 1
 Scroll.BorderSizePixel = 0
 Scroll.ScrollBarThickness = 3
 Scroll.ScrollBarImageColor3 = Theme.accent
-Scroll.ScrollBarImageTransparency = 0.25
 Scroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
 Scroll.CanvasSize = UDim2.new(0, 0, 0, 0)
-Scroll.ScrollingDirection = Enum.ScrollingDirection.Y
-Scroll.Parent = Content
 
-local Layout = Instance.new("UIListLayout")
-Layout.Padding = UDim.new(0, 7)
+local Layout = Instance.new("UIListLayout", Scroll)
+Layout.Padding = UDim.new(0, 6)
 Layout.SortOrder = Enum.SortOrder.LayoutOrder
-Layout.Parent = Scroll
 
-local EmptyFrame = Instance.new("Frame")
-EmptyFrame.Name = "EmptyState"
-EmptyFrame.Size = UDim2.new(1, -6, 0, 130)
+local EmptyFrame = Instance.new("Frame", Scroll)
+EmptyFrame.Size = UDim2.new(1, 0, 0, 110)
 EmptyFrame.BackgroundTransparency = 1
-EmptyFrame.LayoutOrder = 1
-EmptyFrame.Parent = Scroll
 
-local EmptyIconWrap = Instance.new("Frame")
-EmptyIconWrap.Size = UDim2.fromOffset(44, 44)
-EmptyIconWrap.Position = UDim2.new(0.5, -22, 0, 14)
+local EmptyIconWrap = Instance.new("Frame", EmptyFrame)
+EmptyIconWrap.Size = UDim2.new(0, 42, 0, 42)
+EmptyIconWrap.Position = UDim2.new(0.5, -21, 0, 12)
 EmptyIconWrap.BackgroundColor3 = Color3.fromRGB(30, 14, 19)
 EmptyIconWrap.BorderSizePixel = 0
-EmptyIconWrap.Parent = EmptyFrame
 round(EmptyIconWrap, 12)
 stroke(EmptyIconWrap, Theme.border, 1, 0.2)
 
-local EmptyIcon = Instance.new("ImageLabel")
-EmptyIcon.Size = UDim2.fromOffset(20, 20)
+local EmptyIcon = Instance.new("ImageLabel", EmptyIconWrap)
+EmptyIcon.Size = UDim2.new(0, 20, 0, 20)
 EmptyIcon.Position = UDim2.new(0.5, -10, 0.5, -10)
 EmptyIcon.BackgroundTransparency = 1
 EmptyIcon.Image = ICONS.FOLDER
 EmptyIcon.ImageColor3 = Theme.accentSoft
-EmptyIcon.Parent = EmptyIconWrap
 
-local EmptyLabel = Instance.new("TextLabel")
-EmptyLabel.Size = UDim2.new(1, -20, 0, 42)
-EmptyLabel.Position = UDim2.fromOffset(10, 67)
+local EmptyLabel = Instance.new("TextLabel", EmptyFrame)
+EmptyLabel.Size = UDim2.new(1, -16, 0, 38)
+EmptyLabel.Position = UDim2.new(0, 8, 0, 61)
 EmptyLabel.BackgroundTransparency = 1
 EmptyLabel.Text = "No files detected yet.\nPress SCAN NOW to search."
 EmptyLabel.TextColor3 = Theme.muted
@@ -2100,85 +1610,63 @@ EmptyLabel.Font = Enum.Font.Gotham
 EmptyLabel.TextSize = 8
 EmptyLabel.TextWrapped = true
 EmptyLabel.TextXAlignment = Enum.TextXAlignment.Center
-EmptyLabel.Parent = EmptyFrame
 
--- Footer
-local StatsBar = Instance.new("Frame")
-StatsBar.Name = "StatsBar"
-StatsBar.Size = UDim2.new(1, -20, 0, 42)
-StatsBar.Position = UDim2.new(0, 10, 1, -52)
+-- FOOTER STATS
+local StatsBar = Instance.new("Frame", Main)
+StatsBar.Size = UDim2.new(1, -16, 0, 28)
+StatsBar.Position = UDim2.new(0, 8, 1, -34)
 StatsBar.BackgroundColor3 = Theme.panel2
 StatsBar.BorderSizePixel = 0
-StatsBar.Parent = Main
-round(StatsBar, 10)
+round(StatsBar, 8)
 stroke(StatsBar, Theme.border, 1, 0.25)
 
--- StatsBar is a direct Main child; its labels must also sit above Main's
--- background when using Sibling ZIndex behavior.
-StatsBar.ZIndex = 13
-StatsBar.DescendantAdded:Connect(function(obj)
-    task.defer(function()
-        normalizeLayer(obj, 14)
-    end)
-end)
-
-local FooterDot = Instance.new("Frame")
-FooterDot.Size = UDim2.fromOffset(7, 7)
-FooterDot.Position = UDim2.fromOffset(12, 18)
-FooterDot.BackgroundColor3 = Theme.success
+local FooterDot = Instance.new("Frame", StatsBar)
+FooterDot.Size = UDim2.new(0, 6, 0, 6)
+FooterDot.Position = UDim2.new(0, 9, 0.5, -3)
+FooterDot.BackgroundColor3 = Theme.accent
 FooterDot.BorderSizePixel = 0
-FooterDot.Parent = StatsBar
-round(FooterDot, 4)
+round(FooterDot, 3)
 
-local StatsText = Instance.new("TextLabel")
-StatsText.Size = UDim2.new(1, -34, 1, 0)
-StatsText.Position = UDim2.fromOffset(27, 0)
+local StatsText = Instance.new("TextLabel", StatsBar)
+StatsText.Size = UDim2.new(1, -24, 1, 0)
+StatsText.Position = UDim2.new(0, 21, 0, 0)
 StatsText.BackgroundTransparency = 1
-StatsText.Text = "Ready  •  Files: 0  •  Loaded: 0  •  Failed: 0"
+StatsText.Text = "Status: Ready  |  Files: 0  |  Loaded: 0"
 StatsText.TextColor3 = Theme.muted
 StatsText.Font = Enum.Font.GothamMedium
 StatsText.TextSize = 7
 StatsText.TextXAlignment = Enum.TextXAlignment.Left
-StatsText.Parent = StatsBar
-normalizeTree(StatsBar, 14)
 
--- --------------------------------------------------------------------------
--- Notification system
--- --------------------------------------------------------------------------
+-- NOTIFICATION SYSTEM
 local function notify(title, msg, color)
     color = color or Theme.accent
-
-    local notif = Instance.new("Frame")
-    notif.Size = UDim2.fromOffset(260, 60)
-    notif.Position = UDim2.new(1, -272, 1, -82)
+    local notif = Instance.new("Frame", UI)
+    notif.Size = UDim2.new(0, 250, 0, 56)
+    notif.Position = UDim2.new(1, -264, 1, -70)
     notif.BackgroundColor3 = Theme.panel2
     notif.BorderSizePixel = 0
     notif.ZIndex = 200
-    notif.Parent = UI
     round(notif, 10)
     stroke(notif, color, 1, 0.18)
 
-    local accentLine = Instance.new("Frame")
+    local accentLine = Instance.new("Frame", notif)
     accentLine.Size = UDim2.new(0, 3, 1, -14)
-    accentLine.Position = UDim2.fromOffset(0, 7)
+    accentLine.Position = UDim2.new(0, 0, 0, 7)
     accentLine.BackgroundColor3 = color
     accentLine.BorderSizePixel = 0
-    accentLine.ZIndex = 201
-    accentLine.Parent = notif
     round(accentLine, 2)
 
-    local icon = Instance.new("ImageLabel")
-    icon.Size = UDim2.fromOffset(15, 15)
-    icon.Position = UDim2.fromOffset(12, 10)
+    local icon = Instance.new("ImageLabel", notif)
+    icon.Size = UDim2.new(0, 15, 0, 15)
+    icon.Position = UDim2.new(0, 12, 0, 9)
     icon.BackgroundTransparency = 1
     icon.Image = ICONS.BELL
     icon.ImageColor3 = color
     icon.ZIndex = 201
-    icon.Parent = notif
 
-    local t = Instance.new("TextLabel")
-    t.Size = UDim2.new(1, -45, 0, 17)
-    t.Position = UDim2.fromOffset(35, 7)
+    local t = Instance.new("TextLabel", notif)
+    t.Size = UDim2.new(1, -42, 0, 16)
+    t.Position = UDim2.new(0, 35, 0, 7)
     t.BackgroundTransparency = 1
     t.Text = title
     t.TextColor3 = Theme.text
@@ -2186,11 +1674,10 @@ local function notify(title, msg, color)
     t.TextSize = 9
     t.TextXAlignment = Enum.TextXAlignment.Left
     t.ZIndex = 201
-    t.Parent = notif
 
-    local d = Instance.new("TextLabel")
-    d.Size = UDim2.new(1, -24, 0, 27)
-    d.Position = UDim2.fromOffset(12, 29)
+    local d = Instance.new("TextLabel", notif)
+    d.Size = UDim2.new(1, -24, 0, 25)
+    d.Position = UDim2.new(0, 12, 0, 28)
     d.BackgroundTransparency = 1
     d.Text = msg
     d.TextColor3 = Theme.muted
@@ -2199,7 +1686,6 @@ local function notify(title, msg, color)
     d.TextXAlignment = Enum.TextXAlignment.Left
     d.TextWrapped = true
     d.ZIndex = 201
-    d.Parent = notif
 
     task.spawn(function()
         task.wait(2.5)
@@ -2216,169 +1702,124 @@ local function notify(title, msg, color)
     end)
 end
 
--- --------------------------------------------------------------------------
--- Search state + card builder
--- --------------------------------------------------------------------------
+-- SEARCH STATE
 local allFileCards = {}
 local currentQuery = ""
-local totalLoaded = 0
-local totalFailed = 0
-local totalFound = 0
 
-local function updateStats()
-    FilesValue.Text = tostring(totalFound)
-    InsertedValue.Text = tostring(totalLoaded)
-    FailedValue.Text = tostring(totalFailed)
-    StatsText.Text = string.format(
-        "Ready  •  Files: %d  •  Loaded: %d  •  Failed: %d",
-        totalFound,
-        totalLoaded,
-        totalFailed
-    )
-end
+-- CARD BUILDER
+local totalLoaded = 0
 
 local function buildFileCard(fileInfo)
     EmptyFrame.Visible = false
 
-    local card = Instance.new("Frame")
-    card.Name = "FileCard"
-    card.Size = UDim2.new(1, -6, 0, 70)
+    local card = Instance.new("Frame", Scroll)
+    table.insert(allFileCards, {fileInfo=fileInfo, card=card})
+    card.Size = UDim2.new(1, 0, 0, 60)
     card.BackgroundColor3 = Theme.panel2
     card.BorderSizePixel = 0
-    card.LayoutOrder = #allFileCards + 1
-    card.Parent = Scroll
     round(card, 10)
     stroke(card, Theme.border, 1, 0.25)
 
-    table.insert(allFileCards, {fileInfo = fileInfo, card = card})
-
     local isRbxl = fileInfo.ftype == "RBXL"
 
-    local typeBadge = Instance.new("Frame")
-    typeBadge.Size = UDim2.fromOffset(50, 20)
-    typeBadge.Position = UDim2.fromOffset(8, 9)
-    typeBadge.BackgroundColor3 = isRbxl
-        and Color3.fromRGB(55, 91, 145)
-        or Color3.fromRGB(46, 73, 112)
+    local typeBadge = Instance.new("Frame", card)
+    typeBadge.Size = UDim2.new(0, 48, 0, 19)
+    typeBadge.Position = UDim2.new(0, 8, 0, 8)
+    typeBadge.BackgroundColor3 = isRbxl and Color3.fromRGB(55, 91, 145) or Color3.fromRGB(46, 73, 112)
     typeBadge.BorderSizePixel = 0
-    typeBadge.Parent = card
     round(typeBadge, 6)
 
-    local badgeIcon = Instance.new("ImageLabel")
-    badgeIcon.Size = UDim2.fromOffset(11, 11)
-    badgeIcon.Position = UDim2.fromOffset(5, 4)
+    local badgeIcon = Instance.new("ImageLabel", typeBadge)
+    badgeIcon.Size = UDim2.new(0, 11, 0, 11)
+    badgeIcon.Position = UDim2.new(0, 5, 0.5, -5.5)
     badgeIcon.BackgroundTransparency = 1
     badgeIcon.Image = isRbxl and ICONS.GAMEPAD or ICONS.FILE
     badgeIcon.ImageColor3 = Color3.fromRGB(205, 225, 255)
-    badgeIcon.Parent = typeBadge
 
-    local typeText = Instance.new("TextLabel")
+    local typeText = Instance.new("TextLabel", typeBadge)
     typeText.Size = UDim2.new(1, -20, 1, 0)
-    typeText.Position = UDim2.fromOffset(19, 0)
+    typeText.Position = UDim2.new(0, 19, 0, 0)
     typeText.BackgroundTransparency = 1
     typeText.Text = fileInfo.ftype
     typeText.TextColor3 = Color3.fromRGB(215, 230, 255)
     typeText.Font = Enum.Font.GothamBold
     typeText.TextSize = 8
-    typeText.Parent = typeBadge
 
-    -- Reserve a dedicated right-side button column so text can never
-    -- collide with the action button.
-    local ActionWidth = 78
-    local TextRight = ActionWidth + 22
-
-    local nameLbl = Instance.new("TextLabel")
-    nameLbl.Size = UDim2.new(1, -TextRight, 0, 18)
-    nameLbl.Position = UDim2.fromOffset(66, 7)
+    local nameLbl = Instance.new("TextLabel", card)
+    nameLbl.Size = UDim2.new(1, -170, 0, 17)
+    nameLbl.Position = UDim2.new(0, 64, 0, 7)
     nameLbl.BackgroundTransparency = 1
     nameLbl.Text = fileInfo.name
     nameLbl.TextColor3 = Theme.text
     nameLbl.Font = Enum.Font.GothamBold
-    nameLbl.TextSize = 9
+    nameLbl.TextSize = 10
     nameLbl.TextXAlignment = Enum.TextXAlignment.Left
     nameLbl.TextTruncate = Enum.TextTruncate.AtEnd
-    nameLbl.Parent = card
 
-    local pathLbl = Instance.new("TextLabel")
-    pathLbl.Size = UDim2.new(1, -TextRight, 0, 15)
-    pathLbl.Position = UDim2.fromOffset(66, 29)
+    local pathLbl = Instance.new("TextLabel", card)
+    pathLbl.Size = UDim2.new(1, -170, 0, 13)
+    pathLbl.Position = UDim2.new(0, 64, 0, 28)
     pathLbl.BackgroundTransparency = 1
     pathLbl.Text = fileInfo.path
     pathLbl.TextColor3 = Theme.muted
     pathLbl.Font = Enum.Font.Gotham
-    pathLbl.TextSize = 7
+    pathLbl.TextSize = 8
     pathLbl.TextXAlignment = Enum.TextXAlignment.Left
     pathLbl.TextTruncate = Enum.TextTruncate.AtEnd
-    pathLbl.Parent = card
 
-    local insertFrame = Instance.new("Frame")
-    insertFrame.Size = UDim2.fromOffset(ActionWidth, 32)
-    insertFrame.Position = UDim2.new(1, -(ActionWidth + 8), 0.5, -16)
+    local insertFrame = Instance.new("Frame", card)
+    insertFrame.Size = UDim2.new(0, 76, 0, 30)
+    insertFrame.Position = UDim2.new(1, -84, 0.5, -15)
     insertFrame.BackgroundColor3 = Color3.fromRGB(30, 45, 67)
     insertFrame.BorderSizePixel = 0
-    insertFrame.Parent = card
     round(insertFrame, 8)
-    stroke(insertFrame, Theme.info, 1, 0.35)
+    local btnStroke = stroke(insertFrame, Theme.accent, 1, 0.45)
 
-    local insertIcon = Instance.new("ImageLabel")
-    insertIcon.Size = UDim2.fromOffset(12, 12)
-    insertIcon.Position = UDim2.fromOffset(7, 10)
+    local insertIcon = Instance.new("ImageLabel", insertFrame)
+    insertIcon.Size = UDim2.new(0, 12, 0, 12)
+    insertIcon.Position = UDim2.new(0, 7, 0.5, -6)
     insertIcon.BackgroundTransparency = 1
     insertIcon.Image = ICONS.DOWNLOAD
     insertIcon.ImageColor3 = Theme.accentSoft
-    insertIcon.Parent = insertFrame
 
-    local insertText = Instance.new("TextLabel")
+    local insertText = Instance.new("TextLabel", insertFrame)
     insertText.Size = UDim2.new(1, -24, 1, 0)
-    insertText.Position = UDim2.fromOffset(22, 0)
+    insertText.Position = UDim2.new(0, 22, 0, 0)
     insertText.BackgroundTransparency = 1
     insertText.Text = "INSERT"
     insertText.TextColor3 = Theme.text
     insertText.Font = Enum.Font.GothamBold
-    insertText.TextSize = 7
-    insertText.Parent = insertFrame
+    insertText.TextSize = 8
 
-    local insertBtn = Instance.new("TextButton")
-    insertBtn.Size = UDim2.fromScale(1, 1)
+    local insertBtn = Instance.new("TextButton", insertFrame)
+    insertBtn.Size = UDim2.new(1, 0, 1, 0)
     insertBtn.BackgroundTransparency = 1
     insertBtn.Text = ""
-    insertBtn.Parent = insertFrame
 
-    addHover(
-        insertBtn,
-        insertFrame,
-        Color3.fromRGB(30, 45, 67),
-        Color3.fromRGB(43, 66, 99)
-    )
+    addHover(insertBtn, insertFrame, Color3.fromRGB(30, 45, 67), Color3.fromRGB(43, 66, 99))
 
     insertBtn.MouseButton1Click:Connect(function()
         if insertText.Text == "LOADING" then return end
-
         insertText.Text = "LOADING"
         insertIcon.Image = ICONS.REFRESH
         insertFrame.BackgroundColor3 = Color3.fromRGB(37, 59, 88)
 
         task.spawn(function()
             local ok, msg = loadFile(fileInfo)
-
             if ok then
                 insertText.Text = "DONE"
                 insertIcon.Image = ICONS.CHECK
                 insertFrame.BackgroundColor3 = Color3.fromRGB(48, 104, 73)
                 totalLoaded = totalLoaded + 1
-                updateStats()
+                StatsText.Text = string.format("Status: Ready  |  Files: %d  |  Loaded: %d", #Scroll:GetChildren() - 1, totalLoaded)
                 notify("Success", fileInfo.name .. " dimuat!", Theme.success)
             else
                 insertText.Text = "FAIL"
                 insertIcon.Image = ICONS.ALERT
                 insertFrame.BackgroundColor3 = Color3.fromRGB(92, 43, 50)
-                totalFailed = totalFailed + 1
-                updateStats()
                 notify("Gagal", msg, Theme.danger)
             end
-
             task.wait(2)
-
             insertText.Text = "INSERT"
             insertIcon.Image = ICONS.DOWNLOAD
             insertFrame.BackgroundColor3 = Color3.fromRGB(30, 45, 67)
@@ -2386,34 +1827,18 @@ local function buildFileCard(fileInfo)
     end)
 end
 
+-- SEARCH & FILTER LOGIC
 local function filterCards(query)
     currentQuery = query:lower():gsub("^%s*", ""):gsub("%s*$", "")
     local anyVisible = false
-
     for _, entry in ipairs(allFileCards) do
         local name = entry.fileInfo.name:lower()
         local path = entry.fileInfo.path:lower()
-
-        local visible =
-            currentQuery == ""
-            or name:find(currentQuery, 1, true)
-            or path:find(currentQuery, 1, true)
-
+        local visible = currentQuery == "" or name:find(currentQuery, 1, true) or path:find(currentQuery, 1, true)
         entry.card.Visible = visible
-        if visible then
-            anyVisible = true
-        end
+        if visible then anyVisible = true end
     end
-
-    -- Empty state is shown both when the scan is empty and when a search
-    -- returns zero matches.
-    EmptyFrame.Visible = (#allFileCards == 0) or not anyVisible
-
-    if #allFileCards > 0 and not anyVisible then
-        EmptyLabel.Text = "No matching files.\nTry another search."
-    elseif #allFileCards == 0 then
-        EmptyLabel.Text = "No files detected yet.\nPress SCAN NOW to search."
-    end
+    EmptyFrame.Visible = not anyVisible and #allFileCards == 0
 end
 
 local function tryManualInsert(input)
@@ -2421,25 +1846,18 @@ local function tryManualInsert(input)
     if query == "" then return end
 
     for _, entry in ipairs(allFileCards) do
-        if entry.fileInfo.name:lower() == query:lower()
-            or entry.fileInfo.path:lower() == query:lower() then
-
+        if entry.fileInfo.name:lower() == query:lower() or entry.fileInfo.path:lower() == query:lower() then
             notify("Memuat", entry.fileInfo.name, Theme.accent)
-
             task.spawn(function()
                 local ok, msg = loadFile(entry.fileInfo)
-
                 if ok then
                     totalLoaded = totalLoaded + 1
-                    updateStats()
+                    StatsText.Text = string.format("Status: Ready  |  Files: %d  |  Loaded: %d", #allFileCards, totalLoaded)
                     notify("Success", entry.fileInfo.name .. " dimuat!", Theme.success)
                 else
-                    totalFailed = totalFailed + 1
-                    updateStats()
                     notify("Gagal", msg, Theme.danger)
                 end
             end)
-
             return
         end
     end
@@ -2453,51 +1871,31 @@ local function tryManualInsert(input)
     }
 
     local withExt = {}
-
-    for _, path in ipairs(tryPaths) do
-        table.insert(withExt, path)
-
-        if not path:lower():match("%.rbx") then
-            table.insert(withExt, path .. ".rbxm")
-            table.insert(withExt, path .. ".rbxmx")
-            table.insert(withExt, path .. ".rbxl")
+    for _, p in ipairs(tryPaths) do
+        table.insert(withExt, p)
+        if not p:lower():match("%.rbx") then
+            table.insert(withExt, p .. ".rbxm")
+            table.insert(withExt, p .. ".rbxmx")
+            table.insert(withExt, p .. ".rbxl")
         end
     end
 
     for _, path in ipairs(withExt) do
         local name = path:match("([^/]+)$") or path
-        local lowerName = name:lower()
-        local ftype =
-            lowerName:match("%.rbxlx?$") and "RBXL"
-            or (lowerName:match("%.rbxmx?$") and "RBXM" or nil)
-
+        local ftype = name:lower():match("%.rbxlx?$") and "RBXL" or (name:lower():match("%.rbxmx?$") and "RBXM" or nil)
         if ftype then
-            local fi = {
-                name = name,
-                path = path,
-                ftype = ftype,
-                folder = "manual"
-            }
-
+            local fi = {name=name, path=path, ftype=ftype, folder="manual"}
             local ok, msg = loadFile(fi)
-
             if ok then
                 totalLoaded = totalLoaded + 1
-                updateStats()
                 notify("Manual Insert OK", name .. " dimuat!", Theme.success)
                 return
             end
         end
     end
-
-    totalFailed = totalFailed + 1
-    updateStats()
     notify("Tidak Ditemukan", query .. " tidak ada di folder manapun", Theme.danger)
 end
 
--- --------------------------------------------------------------------------
--- Search + scan
--- --------------------------------------------------------------------------
 SearchInput:GetPropertyChangedSignal("Text"):Connect(function()
     filterCards(SearchInput.Text)
 end)
@@ -2516,81 +1914,59 @@ SearchClearBtn.MouseButton1Click:Connect(function()
     filterCards("")
 end)
 
+-- SCAN LOGIC
 ScanClick.MouseButton1Click:Connect(function()
     ScanText.Text = "SCANNING..."
     ScanIcon.Image = ICONS.REFRESH
     StatusDot.BackgroundColor3 = Theme.accent
-    StatusText.Text = "SCAN"
-    StatusText.TextColor3 = Theme.accent
 
-    for _, child in ipairs(Scroll:GetChildren()) do
-        if child:IsA("Frame") and child ~= EmptyFrame then
-            child:Destroy()
-        end
+    for _, c in ipairs(Scroll:GetChildren()) do
+        if c:IsA("Frame") and c ~= EmptyFrame then c:Destroy() end
     end
-
     allFileCards = {}
-    totalLoaded = 0
-    totalFailed = 0
-    totalFound = 0
     EmptyFrame.Visible = true
-    EmptyLabel.Text = "Scanning workspace...\nPlease wait."
-
-    updateStats()
+    totalLoaded = 0
 
     task.spawn(function()
         local foundFiles = scanAll()
-        totalFound = #foundFiles
-
         for _, f in ipairs(foundFiles) do
             buildFileCard(f)
         end
 
+        StatsText.Text = string.format("Status: Ready  |  Files: %d", #foundFiles)
+        StatusDot.BackgroundColor3 = Theme.success
+        ScanText.Text = "SCAN FILES"
+        ScanIcon.Image = ICONS.SEARCH
+
         if #foundFiles == 0 then
-            EmptyLabel.Text = "No RBXM/RBXL files detected.\nCheck your workspace folder."
+            EmptyLabel.Text = "No RBXM/RBXL files detected.\nCheck your executor workspace folder."
         else
-            EmptyFrame.Visible = false
             notify("Scan Selesai", #foundFiles .. " file terdeteksi", Theme.accent)
         end
-
-        updateStats()
-
-        StatusDot.BackgroundColor3 = Theme.success
-        StatusText.Text = "READY"
-        StatusText.TextColor3 = Theme.success
-        ScanText.Text = "SCAN NOW"
-        ScanIcon.Image = ICONS.SEARCH
     end)
 end)
 
--- --------------------------------------------------------------------------
--- Minimize / close
--- --------------------------------------------------------------------------
-local fullSize = UDim2.fromOffset(400, 480)
-local miniSize = UDim2.fromOffset(400, 58)
-local minimized = false
-
+-- MINIMIZE / CLOSE
 CloseClick.MouseButton1Click:Connect(function()
     if Main.Visible then
         toggleMain()
     end
 end)
 
+local minimized = false
 MinClick.MouseButton1Click:Connect(function()
     minimized = not minimized
-
     if minimized then
-        Body.Visible = false
+        Content.Visible = false
         StatsBar.Visible = false
-        Main.Size = miniSize
+        Main.Size = UDim2.new(0, 390, 0, 62)
     else
-        Body.Visible = true
+        Content.Visible = true
         StatsBar.Visible = true
-        Main.Size = fullSize
+        Main.Size = UDim2.new(0, 390, 0, 470)
     end
 end)
 
-updateStats()
 
 -- HOOKS (Anti-Putus Studio Lite)
 --                                                                        
