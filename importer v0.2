@@ -1003,7 +1003,7 @@ ToggleBtn.MouseButton1Click:Connect(toggleMain)
 local Content = Instance.new("Frame", Main)
 Content.Size = UDim2.new(1, -16, 1, -74)
 Content.Position = UDim2.new(0, 8, 0, 42)
-Content.BackgroundColor3 = Color3.fromRGB(25, 25, 25) -- abu-abu gelap
+Content.BackgroundColor3 = Color3.fromRGB(25, 25, 25)
 Instance.new("UICorner", Content).CornerRadius = UDim.new(0, 8)
 
 local ContentLayout = Instance.new("UIListLayout", Content)
@@ -1037,7 +1037,7 @@ ClearBtn.Font = Enum.Font.GothamBold
 ClearBtn.TextSize = 12
 Instance.new("UICorner", ClearBtn).CornerRadius = UDim.new(0, 6)
 
--- SEARCH BAR (di samping tombol)
+-- SEARCH BAR
 local SearchBar = Instance.new("Frame", Content)
 SearchBar.Size = UDim2.new(0, 220, 0, 30)
 SearchBar.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
@@ -1053,7 +1053,7 @@ SearchInput.TextColor3 = Color3.fromRGB(255, 255, 255)
 SearchInput.Font = Enum.Font.Gotham
 SearchInput.TextSize = 10
 
--- SCROLL LIST (di kanan panel)
+-- SCROLL LIST (Horizontal)
 local Scroll = Instance.new("ScrollingFrame", Content)
 Scroll.Size = UDim2.new(1, -440, 1, -20)
 Scroll.BackgroundTransparency = 1
@@ -1064,7 +1064,7 @@ local Layout = Instance.new("UIListLayout", Scroll)
 Layout.FillDirection = Enum.FillDirection.Vertical
 Layout.Padding = UDim.new(0, 6)
 
--- NOTIFICATION SYSTEM (pojok kanan bawah)
+-- NOTIFICATION SYSTEM
 local function notify(title, msg, color)
     color = color or Color3.fromRGB(200, 40, 40)
     local notif = Instance.new("Frame", UI)
@@ -1102,7 +1102,7 @@ local function notify(title, msg, color)
     d.TextWrapped = true
 end
 
--- FILECARD BUILDER (horizontal style)
+-- FILECARD BUILDER (Horizontal)
 local function buildFileCard(fileInfo)
     local card = Instance.new("Frame", Scroll)
     card.Size = UDim2.new(1, 0, 0, 44)
@@ -1135,7 +1135,6 @@ local function buildFileCard(fileInfo)
     insertBtn.TextSize = 8
     Instance.new("UICorner", insertBtn).CornerRadius = UDim.new(0, 4)
 end
-
 
 -- SEARCH & FILTER LOGIC
 
