@@ -552,7 +552,7 @@ if CoreDest:FindFirstChild("HyazImporterUI") then
 end
 
 local UI = Instance.new("ScreenGui", CoreDest)
-UI.Name = "HyazImporterUI"; UI.ResetOnSpawn = false; UI.DisplayOrder = 100; UI.IgnoreGuiInset = true
+UI.Name = "HyazImporterUI"; UI.ResetOnSpawn = false; UI.DisplayOrder = 100; UI.IgnoreGuiInset = true; UI.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 
 -- Persistent hacker atmosphere: the green tint remains after the loading screen closes.
 local HackerAtmosphere = Instance.new("Frame", UI)
@@ -1453,6 +1453,54 @@ Content.BackgroundTransparency = 1
 Content.ZIndex = 12
 Content.Parent = Body
 
+-- --------------------------------------------------------------------------
+-- Layering fix
+-- Roblox ZIndexBehavior = Sibling means child GuiObjects do NOT inherit the
+-- ZIndex of their parent.  Main uses ZIndex 10, so content children at the
+-- default ZIndex 1 were being rendered BEHIND the black Main background.
+-- Keep every visible child above Main while preserving the header/notification
+-- layers and give interactive controls a small additional priority.
+-- --------------------------------------------------------------------------
+local function normalizeLayer(obj, baseZ)
+    if not obj or not obj:IsA("GuiObject") then return end
+
+    local target = baseZ or 13
+    if obj:IsA("TextButton") or obj:IsA("ImageButton") then
+        target = math.max(target, 15)
+    elseif obj:IsA("TextBox") then
+        target = math.max(target, 14)
+    end
+
+    if obj.ZIndex < target then
+        obj.ZIndex = target
+    end
+end
+
+local function normalizeTree(root, baseZ)
+    for _, obj in ipairs(root:GetDescendants()) do
+        normalizeLayer(obj, baseZ)
+    end
+end
+
+-- Normalize the existing main-window layers.
+normalizeTree(Main, 13)
+normalizeTree(TitleBar, 20)
+normalizeTree(Sidebar, 13)
+normalizeTree(Content, 13)
+
+-- New file cards and module controls are created later, so keep future
+-- descendants correctly layered as well.
+Content.DescendantAdded:Connect(function(obj)
+    task.defer(function()
+        normalizeLayer(obj, 13)
+    end)
+end)
+Sidebar.DescendantAdded:Connect(function(obj)
+    task.defer(function()
+        normalizeLayer(obj, 13)
+    end)
+end)
+
 -- Search row
 local SearchBar = Instance.new("Frame")
 SearchBar.Size = UDim2.new(1, -36, 0, 34)
@@ -1577,6 +1625,15 @@ StatsBar.Parent = Main
 round(StatsBar, 10)
 stroke(StatsBar, Theme.border, 1, 0.25)
 
+-- StatsBar is a direct Main child; its labels must also sit above Main's
+-- background when using Sibling ZIndex behavior.
+StatsBar.ZIndex = 13
+StatsBar.DescendantAdded:Connect(function(obj)
+    task.defer(function()
+        normalizeLayer(obj, 14)
+    end)
+end)
+
 local FooterDot = Instance.new("Frame")
 FooterDot.Size = UDim2.fromOffset(7, 7)
 FooterDot.Position = UDim2.fromOffset(12, 18)
@@ -1595,6 +1652,7 @@ StatsText.Font = Enum.Font.GothamMedium
 StatsText.TextSize = 7
 StatsText.TextXAlignment = Enum.TextXAlignment.Left
 StatsText.Parent = StatsBar
+normalizeTree(StatsBar, 14)
 
 -- --------------------------------------------------------------------------
 -- Notification system
