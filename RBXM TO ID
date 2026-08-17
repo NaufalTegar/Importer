@@ -1,0 +1,947 @@
+--// HYAZ RBXM > ASSET ID
+--// Delta Android / Executor build
+--// Reads .rbxm files from Delta workspace using the same filesystem approach
+--// as the supplied HYAZ Ultimate script.
+
+if not game:IsLoaded() then game.Loaded:Wait() end
+
+local Players = game:GetService("Players")
+local HttpService = game:GetService("HttpService")
+local UserInputService = game:GetService("UserInputService")
+local TweenService = game:GetService("TweenService")
+local CoreGui = game:GetService("CoreGui")
+
+local LocalPlayer = Players.LocalPlayer
+local GuiParent = (pcall(function() return CoreGui.Name end) and CoreGui) or LocalPlayer:WaitForChild("PlayerGui")
+
+--==============================================================
+-- CONFIG
+--==============================================================
+
+local APP_NAME = "HYAZ_RBXM_ASSET_ID"
+local API_URL = "https://apis.roblox.com/assets/v1/assets"
+
+local SCAN_PATHS = {
+    "workspace",
+    "Delta/workspace",
+    "delta/workspace",
+    "Android/Delta/workspace",
+    "/sdcard/Delta/workspace",
+    "/sdcard/Android/Delta/workspace",
+    "../workspace",
+    ".",
+    ""
+}
+
+--==============================================================
+-- SAFE FILESYSTEM
+--==============================================================
+
+local function safeListFiles(path)
+    if type(listfiles) ~= "function" then return nil end
+    local ok, result = pcall(listfiles, path)
+    return ok and result or nil
+end
+
+local function safeReadFile(path)
+    if type(readfile) ~= "function" then return nil end
+    local ok, result = pcall(readfile, path)
+    return ok and result or nil
+end
+
+local function getFileName(path)
+    return tostring(path):match("([^/\\]+)$") or tostring(path)
+end
+
+local function isRBXM(name)
+    name = tostring(name):lower()
+    return name:match("%.rbxm$") or name:match("%.rbxmx$")
+end
+
+local function looksFolder(path)
+    local name = getFileName(path)
+    return not name:match("%.[%a%d]+$")
+end
+
+local function scanDeep(folder, depth, results, seen)
+    if depth > 4 or seen[folder] then return end
+    seen[folder] = true
+
+    local list = safeListFiles(folder)
+    if not list then return end
+
+    for _, path in ipairs(list) do
+        path = tostring(path)
+        local name = getFileName(path)
+
+        if isRBXM(name) then
+            if not seen[path] then
+                seen[path] = true
+                table.insert(results, {
+                    name = name,
+                    path = path,
+                    status = "idle",
+                    assetId = ""
+                })
+            end
+        elseif looksFolder(path) then
+            scanDeep(path, depth + 1, results, seen)
+        end
+    end
+end
+
+local function scanWorkspace()
+    local results, seen = {}, {}
+
+    for _, path in ipairs(SCAN_PATHS) do
+        if safeListFiles(path) then
+            scanDeep(path, 0, results, seen)
+        end
+    end
+
+    table.sort(results, function(a, b)
+        return a.name:lower() < b.name:lower()
+    end)
+
+    return results
+end
+
+--==============================================================
+-- HTTP
+--==============================================================
+
+local function executorRequest(options)
+    local funcs = {
+        function()
+            if syn and syn.request then return syn.request(options) end
+        end,
+        function()
+            if request then return request(options) end
+        end,
+        function()
+            if http_request then return http_request(options) end
+        end,
+        function()
+            if fluxus and fluxus.request then return fluxus.request(options) end
+        end
+    }
+
+    for _, fn in ipairs(funcs) do
+        local ok, result = pcall(fn)
+        if ok and type(result) == "table" then
+            return result
+        end
+    end
+
+    return nil, "Executor HTTP request API tidak tersedia."
+end
+
+local function makeBoundary()
+    return "----HYAZRBXM" .. tostring(math.random(100000, 999999)) .. tostring(os.clock()):gsub("%.", "")
+end
+
+local function multipartBody(boundary, requestJson, fileName, fileData)
+    local CRLF = "\r\n"
+    local parts = {}
+
+    parts[#parts + 1] = "--" .. boundary .. CRLF
+    parts[#parts + 1] = 'Content-Disposition: form-data; name="request"' .. CRLF
+    parts[#parts + 1] = "Content-Type: application/json" .. CRLF .. CRLF
+    parts[#parts + 1] = requestJson .. CRLF
+
+    parts[#parts + 1] = "--" .. boundary .. CRLF
+    parts[#parts + 1] = 'Content-Disposition: form-data; name="fileContent"; filename="' .. fileName .. '"' .. CRLF
+    parts[#parts + 1] = "Content-Type: application/octet-stream" .. CRLF .. CRLF
+    parts[#parts + 1] = fileData
+    parts[#parts + 1] = CRLF
+    parts[#parts + 1] = "--" .. boundary .. "--" .. CRLF
+
+    return table.concat(parts)
+end
+
+local function decodeResponse(body)
+    if type(body) ~= "string" or body == "" then
+        return nil, "Response kosong."
+    end
+
+    local ok, data = pcall(function()
+        return HttpService:JSONDecode(body)
+    end)
+
+    if not ok then
+        return nil, "Response bukan JSON: " .. tostring(body):sub(1, 300)
+    end
+
+    return data
+end
+
+local function uploadRequest(apiKey, creatorId, creatorType, assetType, fileName, fileData)
+    local displayName = fileName:gsub("%.rbxm$", ""):gsub("%.rbxmx$", "")
+
+    local payload = {
+        assetType = assetType,
+        displayName = displayName,
+        description = "Uploaded via HYAZ RBXM > ASSET ID",
+        creationContext = {
+            creator = creatorType == "Group"
+                and { groupId = creatorId }
+                or { userId = creatorId }
+        }
+    }
+
+    local boundary = makeBoundary()
+    local body = multipartBody(
+        boundary,
+        HttpService:JSONEncode(payload),
+        fileName,
+        fileData
+    )
+
+    local response, err = executorRequest({
+        Url = API_URL,
+        Method = "POST",
+        Headers = {
+            ["x-api-key"] = apiKey,
+            ["Content-Type"] = "multipart/form-data; boundary=" .. boundary,
+            ["User-Agent"] = "HYAZ-RBXM-ASSET-ID"
+        },
+        Body = body
+    })
+
+    if not response then
+        return nil, err or "HTTP request gagal."
+    end
+
+    local status = tonumber(response.StatusCode or response.Status or 0) or 0
+    local data, jsonErr = decodeResponse(response.Body)
+
+    if not data then
+        return nil, jsonErr
+    end
+
+    if status < 200 or status >= 300 then
+        return nil, tostring(data.message or data.error or ("HTTP " .. status))
+    end
+
+    if not data.path then
+        return nil, "Open Cloud tidak mengembalikan operation path."
+    end
+
+    return data
+end
+
+local function pollOperation(path, apiKey, logFn)
+    for attempt = 1, 20 do
+        local response, err = executorRequest({
+            Url = "https://apis.roblox.com/assets/v1/" .. tostring(path),
+            Method = "GET",
+            Headers = {
+                ["x-api-key"] = apiKey,
+                ["User-Agent"] = "HYAZ-RBXM-ASSET-ID"
+            }
+        })
+
+        if not response then
+            return nil, err or "Polling request gagal."
+        end
+
+        local data, jsonErr = decodeResponse(response.Body)
+        if not data then
+            return nil, jsonErr
+        end
+
+        if data.done then
+            if data.response and data.response.assetId then
+                return tostring(data.response.assetId)
+            end
+
+            if data.error then
+                return nil, tostring(data.error.message or data.error.code or "Operation error")
+            end
+
+            return nil, "Operation selesai tetapi Asset ID tidak ditemukan."
+        end
+
+        if logFn then
+            logFn("Menunggu operation... " .. attempt .. "/20")
+        end
+
+        task.wait(1.5)
+    end
+
+    return nil, "Timeout menunggu proses upload."
+end
+
+--==============================================================
+-- UI
+--==============================================================
+
+local old = GuiParent:FindFirstChild(APP_NAME)
+if old then old:Destroy() end
+
+local Theme = {
+    bg = Color3.fromRGB(15, 17, 21),
+    panel = Color3.fromRGB(24, 27, 33),
+    panel2 = Color3.fromRGB(31, 35, 43),
+    line = Color3.fromRGB(42, 47, 58),
+    text = Color3.fromRGB(231, 233, 238),
+    dim = Color3.fromRGB(138, 144, 160),
+    accent = Color3.fromRGB(242, 169, 59),
+    ok = Color3.fromRGB(61, 220, 151),
+    err = Color3.fromRGB(255, 92, 92),
+    pending = Color3.fromRGB(90, 176, 255)
+}
+
+local function new(class, props, parent)
+    local obj = Instance.new(class)
+    for k, v in pairs(props or {}) do
+        obj[k] = v
+    end
+    obj.Parent = parent
+    return obj
+end
+
+local ScreenGui = new("ScreenGui", {
+    Name = APP_NAME,
+    ResetOnSpawn = false,
+    ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+}, GuiParent)
+
+local Main = new("Frame", {
+    Name = "Main",
+    Size = UDim2.fromOffset(430, 600),
+    Position = UDim2.new(0.5, -215, 0.5, -300),
+    BackgroundColor3 = Theme.bg,
+    BorderSizePixel = 0
+}, ScreenGui)
+
+new("UICorner", {CornerRadius = UDim.new(0, 12)}, Main)
+new("UIStroke", {Color = Theme.line, Thickness = 1}, Main)
+
+local Header = new("Frame", {
+    Size = UDim2.new(1, 0, 0, 52),
+    BackgroundColor3 = Theme.panel,
+    BorderSizePixel = 0
+}, Main)
+new("UICorner", {CornerRadius = UDim.new(0, 12)}, Header)
+
+local Title = new("TextLabel", {
+    BackgroundTransparency = 1,
+    Position = UDim2.fromOffset(16, 8),
+    Size = UDim2.new(1, -110, 0, 23),
+    Font = Enum.Font.GothamBold,
+    Text = "👑  HYAZ RBXM > ASSET ID",
+    TextColor3 = Theme.text,
+    TextSize = 15,
+    TextXAlignment = Enum.TextXAlignment.Left
+}, Header)
+
+local Subtitle = new("TextLabel", {
+    BackgroundTransparency = 1,
+    Position = UDim2.fromOffset(18, 30),
+    Size = UDim2.new(1, -130, 0, 15),
+    Font = Enum.Font.Code,
+    Text = "Open Cloud uploader",
+    TextColor3 = Theme.dim,
+    TextSize = 10,
+    TextXAlignment = Enum.TextXAlignment.Left
+}, Header)
+
+local MinBtn = new("TextButton", {
+    BackgroundColor3 = Theme.panel2,
+    Position = UDim2.new(1, -72, 0, 10),
+    Size = UDim2.fromOffset(28, 28),
+    Text = "−",
+    Font = Enum.Font.GothamBold,
+    TextColor3 = Theme.text,
+    TextSize = 18,
+    AutoButtonColor = false
+}, Header)
+new("UICorner", {CornerRadius = UDim.new(0, 7)}, MinBtn)
+
+local CloseBtn = new("TextButton", {
+    BackgroundColor3 = Theme.panel2,
+    Position = UDim2.new(1, -38, 0, 10),
+    Size = UDim2.fromOffset(28, 28),
+    Text = "×",
+    Font = Enum.Font.GothamBold,
+    TextColor3 = Theme.text,
+    TextSize = 18,
+    AutoButtonColor = false
+}, Header)
+new("UICorner", {CornerRadius = UDim.new(0, 7)}, CloseBtn)
+
+local Content = new("ScrollingFrame", {
+    Position = UDim2.fromOffset(0, 52),
+    Size = UDim2.new(1, 0, 1, -52),
+    BackgroundTransparency = 1,
+    BorderSizePixel = 0,
+    ScrollBarThickness = 4,
+    ScrollBarImageColor3 = Theme.line,
+    CanvasSize = UDim2.new()
+}, Main)
+
+local Layout = new("UIListLayout", {
+    Padding = UDim.new(0, 10),
+    SortOrder = Enum.SortOrder.LayoutOrder
+}, Content)
+
+new("UIPadding", {
+    PaddingTop = UDim.new(0, 12),
+    PaddingBottom = UDim.new(0, 16),
+    PaddingLeft = UDim.new(0, 12),
+    PaddingRight = UDim.new(0, 12)
+}, Content)
+
+local function card(title)
+    local frame = new("Frame", {
+        BackgroundColor3 = Theme.panel,
+        BorderSizePixel = 0,
+        Size = UDim2.new(1, -24, 0, 10),
+        AutomaticSize = Enum.AutomaticSize.Y
+    }, Content)
+
+    new("UICorner", {CornerRadius = UDim.new(0, 10)}, frame)
+    new("UIPadding", {
+        PaddingTop = UDim.new(0, 12),
+        PaddingBottom = UDim.new(0, 12),
+        PaddingLeft = UDim.new(0, 12),
+        PaddingRight = UDim.new(0, 12)
+    }, frame)
+
+    new("UIListLayout", {
+        Padding = UDim.new(0, 8),
+        SortOrder = Enum.SortOrder.LayoutOrder
+    }, frame)
+
+    new("TextLabel", {
+        BackgroundTransparency = 1,
+        Size = UDim2.new(1, 0, 0, 18),
+        Font = Enum.Font.Code,
+        Text = title,
+        TextColor3 = Theme.dim,
+        TextSize = 10,
+        TextXAlignment = Enum.TextXAlignment.Left
+    }, frame)
+
+    return frame
+end
+
+local function label(parent, text)
+    return new("TextLabel", {
+        BackgroundTransparency = 1,
+        Size = UDim2.new(1, 0, 0, 16),
+        Font = Enum.Font.Code,
+        Text = text,
+        TextColor3 = Theme.dim,
+        TextSize = 10,
+        TextXAlignment = Enum.TextXAlignment.Left
+    }, parent)
+end
+
+local function textbox(parent, placeholder)
+    return new("TextBox", {
+        BackgroundColor3 = Theme.panel2,
+        Size = UDim2.new(1, 0, 0, 38),
+        PlaceholderText = placeholder,
+        PlaceholderColor3 = Theme.dim,
+        Text = "",
+        TextColor3 = Theme.text,
+        Font = Enum.Font.Code,
+        TextSize = 12,
+        ClearTextOnFocus = false
+    }, parent)
+end
+
+local CredCard = card("CREDENTIALS")
+
+label(CredCard, "API KEY")
+local KeyRow = new("Frame", {
+    BackgroundTransparency = 1,
+    Size = UDim2.new(1, 0, 0, 38)
+}, CredCard)
+
+local KeyBox = textbox(KeyRow, "paste API key")
+KeyBox.Size = UDim2.new(1, -76, 1, 0)
+
+local ShowBtn = new("TextButton", {
+    BackgroundColor3 = Theme.panel2,
+    Position = UDim2.new(1, -68, 0, 0),
+    Size = UDim2.fromOffset(68, 38),
+    Text = "SHOW",
+    Font = Enum.Font.Code,
+    TextColor3 = Theme.dim,
+    TextSize = 10,
+    AutoButtonColor = false
+}, KeyRow)
+new("UICorner", {CornerRadius = UDim.new(0, 7)}, ShowBtn)
+
+local keyVisible = false
+ShowBtn.MouseButton1Click:Connect(function()
+    keyVisible = not keyVisible
+    KeyBox.TextTransparency = keyVisible and 0 or 0
+    KeyBox.Text = KeyBox.Text
+    ShowBtn.Text = keyVisible and "HIDE" or "SHOW"
+end)
+
+label(CredCard, "CREATOR ID")
+local CreatorBox = textbox(CredCard, "e.g. 8917000719")
+
+local CreatorRow = new("Frame", {
+    BackgroundTransparency = 1,
+    Size = UDim2.new(1, 0, 0, 32)
+}, CredCard)
+
+local UserBtn = new("TextButton", {
+    BackgroundColor3 = Theme.accent,
+    Size = UDim2.new(0.5, -4, 1, 0),
+    Text = "●  USER ID",
+    Font = Enum.Font.Code,
+    TextColor3 = Color3.fromRGB(20, 20, 20),
+    TextSize = 10,
+    AutoButtonColor = false
+}, CreatorRow)
+new("UICorner", {CornerRadius = UDim.new(0, 7)}, UserBtn)
+
+local GroupBtn = new("TextButton", {
+    BackgroundColor3 = Theme.panel2,
+    Position = UDim2.new(0.5, 4, 0, 0),
+    Size = UDim2.new(0.5, -4, 1, 0),
+    Text = "○  GROUP ID",
+    Font = Enum.Font.Code,
+    TextColor3 = Theme.dim,
+    TextSize = 10,
+    AutoButtonColor = false
+}, CreatorRow)
+new("UICorner", {CornerRadius = UDim.new(0, 7)}, GroupBtn)
+
+local creatorType = "User"
+
+local function setCreatorType(t)
+    creatorType = t
+    UserBtn.BackgroundColor3 = t == "User" and Theme.accent or Theme.panel2
+    UserBtn.TextColor3 = t == "User" and Color3.fromRGB(20,20,20) or Theme.dim
+    UserBtn.Text = t == "User" and "●  USER ID" or "○  USER ID"
+
+    GroupBtn.BackgroundColor3 = t == "Group" and Theme.accent or Theme.panel2
+    GroupBtn.TextColor3 = t == "Group" and Color3.fromRGB(20,20,20) or Theme.dim
+    GroupBtn.Text = t == "Group" and "●  GROUP ID" or "○  GROUP ID"
+end
+
+UserBtn.MouseButton1Click:Connect(function() setCreatorType("User") end)
+GroupBtn.MouseButton1Click:Connect(function() setCreatorType("Group") end)
+
+label(CredCard, "ASSET TYPE")
+local AssetTypeBtn = new("TextButton", {
+    BackgroundColor3 = Theme.panel2,
+    Size = UDim2.new(1, 0, 0, 38),
+    Text = "Model  ▼",
+    Font = Enum.Font.Code,
+    TextColor3 = Theme.text,
+    TextSize = 12,
+    TextXAlignment = Enum.TextXAlignment.Left,
+    AutoButtonColor = false
+}, CredCard)
+
+new("UIPadding", {PaddingLeft = UDim.new(0, 12)}, AssetTypeBtn)
+new("UICorner", {CornerRadius = UDim.new(0, 7)}, AssetTypeBtn)
+
+local assetTypes = {"Model", "Plugin", "Video", "Audio"}
+local assetType = "Model"
+local typeIndex = 1
+
+AssetTypeBtn.MouseButton1Click:Connect(function()
+    typeIndex = typeIndex % #assetTypes + 1
+    assetType = assetTypes[typeIndex]
+    AssetTypeBtn.Text = assetType .. "  ▼"
+end)
+
+--==============================================================
+-- FILE LIST
+--==============================================================
+
+local FileCard = card("WORKSPACE")
+
+local ScanBtn = new("TextButton", {
+    BackgroundColor3 = Theme.accent,
+    Size = UDim2.new(1, 0, 0, 38),
+    Text = "🔄  SCAN WORKSPACE",
+    Font = Enum.Font.GothamBold,
+    TextColor3 = Color3.fromRGB(20,20,20),
+    TextSize = 11,
+    AutoButtonColor = false
+}, FileCard)
+new("UICorner", {CornerRadius = UDim.new(0, 7)}, ScanBtn)
+
+local FileScroll = new("ScrollingFrame", {
+    BackgroundColor3 = Theme.panel2,
+    Size = UDim2.new(1, 0, 0, 190),
+    BorderSizePixel = 0,
+    ScrollBarThickness = 3,
+    ScrollBarImageColor3 = Theme.line,
+    CanvasSize = UDim2.new()
+}, FileCard)
+new("UICorner", {CornerRadius = UDim.new(0, 8)}, FileScroll)
+
+local FileLayout = new("UIListLayout", {
+    Padding = UDim.new(0, 5),
+    SortOrder = Enum.SortOrder.LayoutOrder
+}, FileScroll)
+
+new("UIPadding", {
+    PaddingTop = UDim.new(0, 7),
+    PaddingBottom = UDim.new(0, 7),
+    PaddingLeft = UDim.new(0, 7),
+    PaddingRight = UDim.new(0, 7)
+}, FileScroll)
+
+local EmptyLabel = new("TextLabel", {
+    BackgroundTransparency = 1,
+    Size = UDim2.new(1, -14, 0, 60),
+    Font = Enum.Font.Code,
+    Text = "Belum ada file.\nTekan SCAN WORKSPACE.",
+    TextColor3 = Theme.dim,
+    TextSize = 11,
+    TextWrapped = true
+}, FileScroll)
+
+local UploadBtn = new("TextButton", {
+    BackgroundColor3 = Theme.panel2,
+    Size = UDim2.new(1, 0, 0, 42),
+    Text = "UPLOAD ALL",
+    Font = Enum.Font.GothamBold,
+    TextColor3 = Theme.text,
+    TextSize = 12,
+    AutoButtonColor = false
+}, FileCard)
+new("UICorner", {CornerRadius = UDim.new(0, 7)}, UploadBtn)
+
+--==============================================================
+-- LOG
+--==============================================================
+
+local LogCard = card("LOG")
+
+local LogBox = new("TextLabel", {
+    BackgroundColor3 = Color3.fromRGB(11, 13, 17),
+    Size = UDim2.new(1, 0, 0, 105),
+    BorderSizePixel = 0,
+    Font = Enum.Font.Code,
+    Text = "Ready. Isi API Key + Creator ID, lalu Scan Workspace.",
+    TextColor3 = Theme.dim,
+    TextSize = 10,
+    TextWrapped = true,
+    TextXAlignment = Enum.TextXAlignment.Left,
+    TextYAlignment = Enum.TextYAlignment.Top
+}, LogCard)
+
+new("UIPadding", {
+    PaddingTop = UDim.new(0, 8),
+    PaddingBottom = UDim.new(0, 8),
+    PaddingLeft = UDim.new(0, 8),
+    PaddingRight = UDim.new(0, 8)
+}, LogBox)
+new("UICorner", {CornerRadius = UDim.new(0, 7)}, LogBox)
+
+local entries = {}
+local busy = false
+
+local function log(msg)
+    local oldText = LogBox.Text
+    local lines = {}
+    for line in (oldText .. "\n" .. tostring(msg)):gmatch("[^\n]+") do
+        table.insert(lines, line)
+    end
+    while #lines > 8 do
+        table.remove(lines, 1)
+    end
+    LogBox.Text = table.concat(lines, "\n")
+end
+
+local function clearFileRows()
+    for _, child in ipairs(FileScroll:GetChildren()) do
+        if child:IsA("Frame") then
+            child:Destroy()
+        end
+    end
+end
+
+local function statusColor(status)
+    if status == "OK" then return Theme.ok end
+    if status == "ERR" then return Theme.err end
+    if status == "pending" then return Theme.pending end
+    return Theme.dim
+end
+
+local function renderFiles()
+    clearFileRows()
+
+    EmptyLabel.Visible = #entries == 0
+
+    for _, entry in ipairs(entries) do
+        local row = new("Frame", {
+            BackgroundColor3 = Theme.panel,
+            Size = UDim2.new(1, 0, 0, 42),
+            BorderSizePixel = 0
+        }, FileScroll)
+
+        new("UICorner", {CornerRadius = UDim.new(0, 6)}, row)
+
+        new("TextLabel", {
+            BackgroundTransparency = 1,
+            Position = UDim2.fromOffset(8, 4),
+            Size = UDim2.new(1, -105, 0, 17),
+            Font = Enum.Font.Code,
+            Text = entry.name,
+            TextColor3 = Theme.text,
+            TextSize = 10,
+            TextXAlignment = Enum.TextXAlignment.Left,
+            TextTruncate = Enum.TextTruncate.AtEnd
+        }, row)
+
+        new("TextLabel", {
+            BackgroundTransparency = 1,
+            Position = UDim2.fromOffset(8, 21),
+            Size = UDim2.new(1, -105, 0, 14),
+            Font = Enum.Font.Code,
+            Text = entry.assetId ~= "" and ("ID: " .. entry.assetId) or entry.path,
+            TextColor3 = Theme.dim,
+            TextSize = 8,
+            TextXAlignment = Enum.TextXAlignment.Left,
+            TextTruncate = Enum.TextTruncate.AtEnd
+        }, row)
+
+        local chip = new("TextLabel", {
+            BackgroundColor3 = Theme.panel2,
+            Position = UDim2.new(1, -90, 0.5, -10),
+            Size = UDim2.fromOffset(82, 20),
+            Font = Enum.Font.Code,
+            Text = string.upper(entry.status),
+            TextColor3 = statusColor(entry.status),
+            TextSize = 9
+        }, row)
+        new("UICorner", {CornerRadius = UDim.new(0, 5)}, chip)
+
+        row.InputBegan:Connect(function(input)
+            if input.UserInputType == Enum.UserInputType.MouseButton1
+                or input.UserInputType == Enum.UserInputType.Touch then
+                if entry.assetId ~= "" then
+                    if type(setclipboard) == "function" then
+                        pcall(setclipboard, entry.assetId)
+                        log("Copied Asset ID: " .. entry.assetId)
+                    else
+                        log("Asset ID: " .. entry.assetId)
+                    end
+                end
+            end
+        end)
+    end
+
+    task.defer(function()
+        FileScroll.CanvasSize = UDim2.fromOffset(0, FileLayout.AbsoluteContentSize.Y + 14)
+        Content.CanvasSize = UDim2.fromOffset(0, Layout.AbsoluteContentSize.Y + 20)
+    end)
+end
+
+--==============================================================
+-- SCAN
+--==============================================================
+
+ScanBtn.MouseButton1Click:Connect(function()
+    if busy then return end
+
+    ScanBtn.Text = "SCANNING..."
+    log("Scanning Delta workspace...")
+
+    task.spawn(function()
+        local found = scanWorkspace()
+        entries = found
+        renderFiles()
+
+        if #found > 0 then
+            log("Scan selesai: " .. #found .. " .rbxm ditemukan.")
+        else
+            log("Tidak ada .rbxm/.rbxmx ditemukan.")
+        end
+
+        ScanBtn.Text = "🔄  SCAN WORKSPACE"
+    end)
+end)
+
+--==============================================================
+-- UPLOAD
+--==============================================================
+
+local function uploadOne(entry)
+    entry.status = "pending"
+    renderFiles()
+
+    local apiKey = KeyBox.Text:gsub("^%s+", ""):gsub("%s+$", "")
+    local creatorId = CreatorBox.Text:gsub("^%s+", ""):gsub("%s+$", "")
+
+    local data = safeReadFile(entry.path)
+    if not data or #data == 0 then
+        entry.status = "ERR"
+        renderFiles()
+        log(entry.name .. ": readfile gagal.")
+        return false
+    end
+
+    log("Uploading: " .. entry.name)
+
+    local op, err = uploadRequest(
+        apiKey,
+        creatorId,
+        creatorType,
+        assetType,
+        entry.name,
+        data
+    )
+
+    if not op then
+        entry.status = "ERR"
+        renderFiles()
+        log(entry.name .. ": " .. tostring(err))
+        return false
+    end
+
+    local assetId, pollErr = pollOperation(op.path, apiKey, log)
+
+    if not assetId then
+        entry.status = "ERR"
+        renderFiles()
+        log(entry.name .. ": " .. tostring(pollErr))
+        return false
+    end
+
+    entry.status = "OK"
+    entry.assetId = assetId
+    renderFiles()
+    log(entry.name .. ": OK -> " .. assetId)
+
+    return true
+end
+
+UploadBtn.MouseButton1Click:Connect(function()
+    if busy then return end
+
+    local apiKey = KeyBox.Text:gsub("^%s+", ""):gsub("%s+$", "")
+    local creatorId = CreatorBox.Text:gsub("^%s+", ""):gsub("%s+$", "")
+
+    if apiKey == "" then
+        log("ERROR: Isi API Key terlebih dahulu.")
+        return
+    end
+
+    if creatorId == "" or not creatorId:match("^%d+$") then
+        log("ERROR: Creator ID harus berupa angka.")
+        return
+    end
+
+    if #entries == 0 then
+        log("ERROR: Scan workspace terlebih dahulu.")
+        return
+    end
+
+    busy = true
+    UploadBtn.Text = "UPLOADING..."
+    UploadBtn.BackgroundColor3 = Theme.pending
+
+    task.spawn(function()
+        local success = 0
+        local failed = 0
+
+        for _, entry in ipairs(entries) do
+            if entry.status ~= "OK" then
+                if uploadOne(entry) then
+                    success += 1
+                else
+                    failed += 1
+                end
+                task.wait(0.2)
+            end
+        end
+
+        busy = false
+        UploadBtn.Text = "UPLOAD ALL"
+        UploadBtn.BackgroundColor3 = Theme.panel2
+
+        log(string.format("Selesai. OK: %d | ERR: %d", success, failed))
+    end)
+end)
+
+--==============================================================
+-- MINIMIZE / RESTORE
+--==============================================================
+
+local Mini = new("TextButton", {
+    Name = "HYAZ_Mini",
+    Size = UDim2.fromOffset(58, 58),
+    Position = UDim2.new(0, 20, 0.5, -29),
+    BackgroundColor3 = Theme.panel,
+    BorderSizePixel = 0,
+    Text = "👑",
+    Font = Enum.Font.GothamBold,
+    TextSize = 27,
+    TextColor3 = Theme.accent,
+    Visible = false,
+    AutoButtonColor = false
+}, ScreenGui)
+new("UICorner", {CornerRadius = UDim.new(1, 0)}, Mini)
+new("UIStroke", {Color = Theme.accent, Thickness = 1}, Mini)
+
+MinBtn.MouseButton1Click:Connect(function()
+    Main.Visible = false
+    Mini.Visible = true
+end)
+
+Mini.MouseButton1Click:Connect(function()
+    Mini.Visible = false
+    Main.Visible = true
+end)
+
+CloseBtn.MouseButton1Click:Connect(function()
+    ScreenGui:Destroy()
+end)
+
+--==============================================================
+-- DRAGGABLE WINDOW
+--==============================================================
+
+local dragging = false
+local dragStart
+local startPos
+
+Header.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1
+        or input.UserInputType == Enum.UserInputType.Touch then
+        dragging = true
+        dragStart = input.Position
+        startPos = Main.Position
+    end
+end)
+
+UserInputService.InputChanged:Connect(function(input)
+    if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement
+        or input.UserInputType == Enum.UserInputType.Touch) then
+
+        local delta = input.Position - dragStart
+        Main.Position = UDim2.new(
+            startPos.X.Scale,
+            startPos.X.Offset + delta.X,
+            startPos.Y.Scale,
+            startPos.Y.Offset + delta.Y
+        )
+    end
+end)
+
+UserInputService.InputEnded:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1
+        or input.UserInputType == Enum.UserInputType.Touch then
+        dragging = false
+    end
+end)
+
+-- Initial scan is intentionally manual so the UI opens immediately.
+renderFiles()
+log("HYAZ RBXM > ASSET ID loaded.")
