@@ -752,7 +752,7 @@ local PickerList = new("ScrollingFrame", {
     ScrollBarImageColor3 = Theme.line,
     CanvasSize = UDim2.new(),
     ZIndex = 52
-}, PickerList)
+}, Picker)
 new("UICorner", {CornerRadius = UDim.new(0, 8)}, PickerList)
 
 local PickerLayout = new("UIListLayout", {
