@@ -3,57 +3,16 @@
 --// Reads .rbxm files from Delta workspace using the same filesystem approach
 --// as the supplied HYAZ Ultimate script.
 
--- Safe executor bootstrap.
--- Do not call game:IsLoaded()/game.Loaded before the UI exists: some
--- mobile executor environments expose these differently during injection.
+if not game:IsLoaded() then game.Loaded:Wait() end
 
-local function svc(name)
-    local ok, result = pcall(function()
-        return game:GetService(name)
-    end)
-    if ok then
-        return result
-    end
-    return nil
-end
-
-local Players = svc("Players")
-local HttpService = svc("HttpService")
-local UserInputService = svc("UserInputService")
-local TweenService = svc("TweenService")
-local CoreGui = svc("CoreGui")
-
-if not Players then
-    error("HYAZ: Players service is unavailable in this executor.")
-end
+local Players = game:GetService("Players")
+local HttpService = game:GetService("HttpService")
+local UserInputService = game:GetService("UserInputService")
+local TweenService = game:GetService("TweenService")
+local CoreGui = game:GetService("CoreGui")
 
 local LocalPlayer = Players.LocalPlayer
-if not LocalPlayer then
-    error("HYAZ: LocalPlayer is unavailable. Execute after joining the game.")
-end
-
-local GuiParent = nil
-if CoreGui then
-    local ok = pcall(function()
-        GuiParent = CoreGui
-    end)
-end
-
-if not GuiParent then
-    local ok, playerGui = pcall(function()
-        return LocalPlayer:FindFirstChildOfClass("PlayerGui")
-    end)
-
-    if ok and playerGui then
-        GuiParent = playerGui
-    else
-        GuiParent = LocalPlayer:WaitForChild("PlayerGui", 10)
-    end
-end
-
-if not GuiParent then
-    error("HYAZ: PlayerGui/CoreGui is unavailable.")
-end
+local GuiParent = (pcall(function() return CoreGui.Name end) and CoreGui) or LocalPlayer:WaitForChild("PlayerGui")
 
 --==============================================================
 -- CONFIG
@@ -62,27 +21,14 @@ end
 local APP_NAME = "HYAZ_RBXM_ASSET_ID"
 local API_URL = "https://apis.roblox.com/assets/v1/assets"
 
--- Delta Android filesystem roots.
--- These are based on the working filesystem scanner used by the
--- supplied HYAZ importer, including Android's actual shared-storage paths.
 local SCAN_PATHS = {
-    "/storage/emulated/0/Delta/workspace",
-    "/storage/emulated/0/Android/Delta/workspace",
-    "/sdcard/Delta/workspace",
-    "/sdcard/Android/Delta/workspace",
-
-    "emulator/android/delta/workspace",
-    "emulator/Android/Delta/workspace",
-    "emulator/android/Delta/workspace",
-    "Emulator/Android/Delta/workspace",
-
+    "workspace",
     "Delta/workspace",
     "delta/workspace",
     "Android/Delta/workspace",
-    "Android/delta/workspace",
-
-    "workspace",
-    "Workspace",
+    "/sdcard/Delta/workspace",
+    "/sdcard/Android/Delta/workspace",
+    "../workspace",
     ".",
     ""
 }
@@ -91,154 +37,65 @@ local SCAN_PATHS = {
 -- SAFE FILESYSTEM
 --==============================================================
 
-local function normalizePath(p)
-    p = tostring(p or ""):gsub("\\", "/")
-    p = p:gsub("/+", "/")
-    return p
-end
-
 local function safeListFiles(path)
-    if type(listfiles) ~= "function" then
-        return nil
-    end
-
-    local ok, result = pcall(listfiles, normalizePath(path))
-    if not ok or type(result) ~= "table" then
-        return nil
-    end
-
-    return result
-end
-
-local function safeIsFolder(path)
-    if type(isfolder) ~= "function" then
-        return nil
-    end
-
-    local ok, result = pcall(isfolder, normalizePath(path))
-    if ok then
-        return result == true
-    end
-
-    return nil
+    if type(listfiles) ~= "function" then return nil end
+    local ok, result = pcall(listfiles, path)
+    return ok and result or nil
 end
 
 local function safeReadFile(path)
-    if type(readfile) ~= "function" then
-        return nil
-    end
-
-    local ok, result = pcall(readfile, normalizePath(path))
+    if type(readfile) ~= "function" then return nil end
+    local ok, result = pcall(readfile, path)
     return ok and result or nil
 end
 
 local function getFileName(path)
-    path = normalizePath(path)
-    return path:match("([^/]+)$") or path
+    return tostring(path):match("([^/\\]+)$") or tostring(path)
 end
 
-local function getFileType(name)
-    name = tostring(name or ""):lower()
-
-    if name:match("%.rbxm$") or name:match("%.rbxmx$") then
-        return "RBXM"
-    end
-
-    return nil
+local function isRBXM(name)
+    name = tostring(name):lower()
+    return name:match("%.rbxm$") or name:match("%.rbxmx$")
 end
 
 local function looksFolder(path)
     local name = getFileName(path)
-    return not name:match("%.[%w_%-]+$")
+    return not name:match("%.[%a%d]+$")
 end
 
---==============================================================
--- ROBUST DELTA WORKSPACE SCANNER
---==============================================================
+local function scanDeep(folder, depth, results, seen)
+    if depth > 4 or seen[folder] then return end
+    seen[folder] = true
+
+    local list = safeListFiles(folder)
+    if not list then return end
+
+    for _, path in ipairs(list) do
+        path = tostring(path)
+        local name = getFileName(path)
+
+        if isRBXM(name) then
+            if not seen[path] then
+                seen[path] = true
+                table.insert(results, {
+                    name = name,
+                    path = path,
+                    status = "idle",
+                    assetId = ""
+                })
+            end
+        elseif looksFolder(path) then
+            scanDeep(path, depth + 1, results, seen)
+        end
+    end
+end
 
 local function scanWorkspace()
-    local results = {}
-    local seenFiles = {}
-    local seenFolders = {}
-    local openedRoots = {}
-    local rootStats = {}
+    local results, seen = {}, {}
 
-    local function addFile(path, root)
-        path = normalizePath(path)
-
-        if seenFiles[path] then
-            return
-        end
-
-        local name = getFileName(path)
-        local ftype = getFileType(name)
-
-        if not ftype then
-            return
-        end
-
-        seenFiles[path] = true
-
-        results[#results + 1] = {
-            name = name,
-            path = path,
-            ftype = ftype,
-            status = "idle",
-            assetId = "",
-            selected = false
-        }
-
-        rootStats[root] = (rootStats[root] or 0) + 1
-    end
-
-    local function walk(folder, depth, root)
-        folder = normalizePath(folder)
-
-        if depth > 8 or seenFolders[folder] then
-            return
-        end
-
-        seenFolders[folder] = true
-
-        local list = safeListFiles(folder)
-        if type(list) ~= "table" then
-            return
-        end
-
-        for _, rawEntry in ipairs(list) do
-            local entry = normalizePath(rawEntry)
-            local name = getFileName(entry)
-
-            if getFileType(name) then
-                addFile(entry, root)
-            else
-                local folderResult = safeIsFolder(entry)
-
-                if folderResult == true then
-                    walk(entry, depth + 1, root)
-                elseif folderResult == nil and looksFolder(entry) then
-                    -- Fallback for executors without isfolder().
-                    walk(entry, depth + 1, root)
-                end
-            end
-        end
-    end
-
-    local rootSeen = {}
-
-    for _, root in ipairs(SCAN_PATHS) do
-        root = normalizePath(root)
-
-        if not rootSeen[root] then
-            rootSeen[root] = true
-
-            local list = safeListFiles(root)
-
-            if type(list) == "table" then
-                openedRoots[#openedRoots + 1] = root
-                rootStats[root] = 0
-                walk(root, 0, root)
-            end
+    for _, path in ipairs(SCAN_PATHS) do
+        if safeListFiles(path) then
+            scanDeep(path, 0, results, seen)
         end
     end
 
@@ -246,7 +103,7 @@ local function scanWorkspace()
         return a.name:lower() < b.name:lower()
     end)
 
-    return results, openedRoots, rootStats
+    return results
 end
 
 --==============================================================
@@ -452,8 +309,8 @@ local ScreenGui = new("ScreenGui", {
 
 local Main = new("Frame", {
     Name = "Main",
-    Size = UDim2.fromOffset(680, 420),
-    Position = UDim2.new(0.5, -340, 0.5, -210),
+    Size = UDim2.fromOffset(760, 440),
+    Position = UDim2.new(0.5, -380, 0.5, -220),
     BackgroundColor3 = Theme.bg,
     BorderSizePixel = 0
 }, ScreenGui)
@@ -515,8 +372,6 @@ local CloseBtn = new("TextButton", {
 new("UICorner", {CornerRadius = UDim.new(0, 7)}, CloseBtn)
 
 local Content = new("ScrollingFrame", {
-    Active = true,
-    ScrollingDirection = Enum.ScrollingDirection.Y,
     Position = UDim2.fromOffset(0, 52),
     Size = UDim2.new(1, 0, 1, -52),
     BackgroundTransparency = 1,
@@ -526,32 +381,55 @@ local Content = new("ScrollingFrame", {
     CanvasSize = UDim2.new()
 }, Main)
 
-local Layout = new("UIListLayout", {
-    Padding = UDim.new(0, 8),
-    FillDirection = Enum.FillDirection.Horizontal,
-    HorizontalAlignment = Enum.HorizontalAlignment.Left,
-    VerticalAlignment = Enum.VerticalAlignment.Top,
-    SortOrder = Enum.SortOrder.LayoutOrder,
-    Wraps = true
+-- Landscape layout:
+-- left = credentials, right = workspace picker, bottom = log.
+-- Keep the original working scan/upload code untouched.
+local LeftColumn = new("Frame", {
+    BackgroundTransparency = 1,
+    Position = UDim2.fromOffset(12, 12),
+    Size = UDim2.fromOffset(360, 290)
 }, Content)
+
+local RightColumn = new("Frame", {
+    BackgroundTransparency = 1,
+    Position = UDim2.fromOffset(388, 12),
+    Size = UDim2.fromOffset(360, 290)
+}, Content)
+
+new("UIListLayout", {
+    Padding = UDim.new(0, 8),
+    SortOrder = Enum.SortOrder.LayoutOrder
+}, LeftColumn)
+
+new("UIListLayout", {
+    Padding = UDim.new(0, 8),
+    SortOrder = Enum.SortOrder.LayoutOrder
+}, RightColumn)
 
 new("UIPadding", {
-    PaddingTop = UDim.new(0, 8),
-    PaddingBottom = UDim.new(0, 10),
-    PaddingLeft = UDim.new(0, 12),
-    PaddingRight = UDim.new(0, 12)
+    PaddingTop = UDim.new(0, 0),
+    PaddingBottom = UDim.new(0, 0),
+    PaddingLeft = UDim.new(0, 0),
+    PaddingRight = UDim.new(0, 0)
 }, Content)
-Layout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
-    Content.CanvasSize = UDim2.fromOffset(0, Layout.AbsoluteContentSize.Y + 20)
-end)
+
+Content.CanvasSize = UDim2.fromOffset(760, 430)
 
 local function card(title)
+    local parent = Content
+
+    if title == "CREDENTIALS" then
+        parent = LeftColumn
+    elseif title == "WORKSPACE" then
+        parent = RightColumn
+    end
+
     local frame = new("Frame", {
         BackgroundColor3 = Theme.panel,
         BorderSizePixel = 0,
-        Size = UDim2.new(0.5, -18, 0, 10),
+        Size = UDim2.new(1, 0, 0, 10),
         AutomaticSize = Enum.AutomaticSize.Y
-    }, Content)
+    }, parent)
 
     new("UICorner", {CornerRadius = UDim.new(0, 10)}, frame)
     new("UIPadding", {
@@ -684,6 +562,9 @@ UserBtn.MouseButton1Click:Connect(function() setCreatorType("User") end)
 GroupBtn.MouseButton1Click:Connect(function() setCreatorType("Group") end)
 
 label(CredCard, "ASSET TYPE")
+CredCard.Size = UDim2.fromOffset(360, 286)
+CredCard.AutomaticSize = Enum.AutomaticSize.None
+
 local AssetTypeBtn = new("TextButton", {
     BackgroundColor3 = Theme.panel2,
     Size = UDim2.new(1, 0, 0, 38),
@@ -708,23 +589,13 @@ AssetTypeBtn.MouseButton1Click:Connect(function()
     AssetTypeBtn.Text = assetType .. "  ▼"
 end)
 
--- Two-column landscape layout: credentials on the left, workspace on the right.
-CredCard.Size = UDim2.new(0.5, -18, 0, 270)
-CredCard.AutomaticSize = Enum.AutomaticSize.None
-
 --==============================================================
 -- WORKSPACE / SINGLE FILE PICKER
 --==============================================================
 
--- IMPORTANT: initialize before button callbacks are connected.
-local entries = {}
-local busy = false
-
 local WorkCard = card("WORKSPACE")
-WorkCard.Size = UDim2.new(0.5, -18, 0, 270)
-WorkCard.AutomaticSize = Enum.AutomaticSize.None
 
-local ScanPickRow = new("Frame", {
+local ScanRow = new("Frame", {
     BackgroundTransparency = 1,
     Size = UDim2.new(1, 0, 0, 36)
 }, WorkCard)
@@ -737,246 +608,61 @@ local ScanBtn = new("TextButton", {
     TextColor3 = Color3.fromRGB(20,20,20),
     TextSize = 10,
     AutoButtonColor = false
-}, ScanPickRow)
+}, ScanRow)
 new("UICorner", {CornerRadius = UDim.new(0, 7)}, ScanBtn)
 
 local PickBtn = new("TextButton", {
     BackgroundColor3 = Theme.panel2,
     Position = UDim2.new(0.5, 4, 0, 0),
     Size = UDim2.new(0.5, -4, 1, 0),
-    Text = "☑  PILIH 1 FILE",
+    Text = "☑  PILIH FILE",
     Font = Enum.Font.GothamBold,
     TextColor3 = Theme.text,
     TextSize = 10,
     AutoButtonColor = false
-}, ScanPickRow)
+}, ScanRow)
 new("UICorner", {CornerRadius = UDim.new(0, 7)}, PickBtn)
-
-local FileCount = new("TextLabel", {
-    BackgroundTransparency = 1,
-    Size = UDim2.new(1, 0, 0, 17),
-    Text = "Belum scan workspace",
-    Font = Enum.Font.Code,
-    TextColor3 = Theme.dim,
-    TextSize = 9,
-    TextXAlignment = Enum.TextXAlignment.Left
-}, WorkCard)
 
 local SelectedBox = new("TextLabel", {
     BackgroundColor3 = Theme.panel2,
-    Size = UDim2.new(1, 0, 0, 38),
-    Text = "FILE: belum dipilih",
+    Size = UDim2.new(1, 0, 0, 40),
+    Text = "Belum memilih file",
     Font = Enum.Font.Code,
     TextColor3 = Theme.dim,
-    TextSize = 9,
+    TextSize = 10,
     TextXAlignment = Enum.TextXAlignment.Left,
     TextTruncate = Enum.TextTruncate.AtEnd
 }, WorkCard)
 new("UICorner", {CornerRadius = UDim.new(0, 7)}, SelectedBox)
-new("UIPadding", {PaddingLeft = UDim.new(0, 9), PaddingRight = UDim.new(0, 9)}, SelectedBox)
+new("UIPadding", {PaddingLeft = UDim.new(0, 10), PaddingRight = UDim.new(0, 10)}, SelectedBox)
 
 local UploadBtn = new("TextButton", {
     BackgroundColor3 = Theme.panel2,
-    Size = UDim2.new(1, 0, 0, 38),
+    Size = UDim2.new(1, 0, 0, 40),
     Text = "UPLOAD FILE TERPILIH",
     Font = Enum.Font.GothamBold,
     TextColor3 = Theme.text,
-    TextSize = 10,
+    TextSize = 11,
     AutoButtonColor = false
 }, WorkCard)
 new("UICorner", {CornerRadius = UDim.new(0, 7)}, UploadBtn)
 
--- Popup selector: the main UI never lists/uploads all files.
-local PickerOverlay = new("Frame", {
-    Name = "SingleFilePicker",
-    Size = UDim2.fromScale(1, 1),
-    BackgroundColor3 = Color3.fromRGB(0, 0, 0),
-    BackgroundTransparency = 0.32,
-    Visible = false,
-    ZIndex = 50
-}, ScreenGui)
-
-local Picker = new("Frame", {
-    Size = UDim2.fromOffset(500, 320),
-    Position = UDim2.new(0.5, -250, 0.5, -160),
-    BackgroundColor3 = Theme.bg,
-    BorderSizePixel = 0,
-    ZIndex = 51
-}, PickerOverlay)
-new("UICorner", {CornerRadius = UDim.new(0, 11)}, Picker)
-new("UIStroke", {Color = Theme.line, Thickness = 1}, Picker)
-
-new("TextLabel", {
-    BackgroundTransparency = 1,
-    Position = UDim2.fromOffset(10, 8),
-    Size = UDim2.new(1, -52, 0, 22),
-    Font = Enum.Font.GothamBold,
-    Text = "PILIH SATU FILE",
-    TextColor3 = Theme.text,
-    TextSize = 12,
-    TextXAlignment = Enum.TextXAlignment.Left,
-    ZIndex = 52
-}, Picker)
-
-local PickerClose = new("TextButton", {
-    BackgroundColor3 = Theme.panel2,
-    Position = UDim2.new(1, -38, 0, 7),
-    Size = UDim2.fromOffset(28, 28),
-    Text = "×",
-    Font = Enum.Font.GothamBold,
-    TextColor3 = Theme.text,
-    TextSize = 17,
-    AutoButtonColor = false,
-    ZIndex = 52
-}, Picker)
-new("UICorner", {CornerRadius = UDim.new(0, 6)}, PickerClose)
-
-local PickerHint = new("TextLabel", {
-    BackgroundTransparency = 1,
-    Position = UDim2.fromOffset(10, 37),
-    Size = UDim2.new(1, -20, 0, 18),
-    Text = "Sentuh salah satu .rbxm untuk memilihnya.",
-    Font = Enum.Font.Code,
-    TextColor3 = Theme.dim,
-    TextSize = 8,
-    TextXAlignment = Enum.TextXAlignment.Left,
-    ZIndex = 52
-}, Picker)
-
-local PickerList = new("ScrollingFrame", {
-    Active = true,
-    ScrollingDirection = Enum.ScrollingDirection.Y,
-    Position = UDim2.fromOffset(8, 60),
-    Size = UDim2.new(1, -16, 1, -68),
-    BackgroundColor3 = Theme.panel,
-    BorderSizePixel = 0,
-    ScrollBarThickness = 4,
-    ScrollBarImageColor3 = Theme.line,
-    CanvasSize = UDim2.new(),
-    ZIndex = 52
-}, Picker)
-new("UICorner", {CornerRadius = UDim.new(0, 8)}, PickerList)
-
-local PickerLayout = new("UIListLayout", {
-    Padding = UDim.new(0, 4),
-    SortOrder = Enum.SortOrder.LayoutOrder
-}, PickerList)
-PickerLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
-    PickerList.CanvasSize = UDim2.fromOffset(0, PickerLayout.AbsoluteContentSize.Y + 14)
-end)
-
-new("UIPadding", {
-    PaddingTop = UDim.new(0, 6),
-    PaddingBottom = UDim.new(0, 6),
-    PaddingLeft = UDim.new(0, 6),
-    PaddingRight = UDim.new(0, 6)
-}, PickerList)
-
-local PickerEmpty = new("TextLabel", {
-    BackgroundTransparency = 1,
-    Size = UDim2.new(1, -12, 0, 45),
-    Text = "Tidak ada file.\nTekan SCAN.",
-    Font = Enum.Font.Code,
-    TextColor3 = Theme.dim,
-    TextSize = 9,
-    TextWrapped = true,
-    ZIndex = 53
-}, PickerList)
-
-local function selectedEntry()
-    for _, entry in ipairs(entries) do
-        if entry.selected == true then
-            return entry
-        end
-    end
-    return nil
-end
-
-local function updateSelectedBox()
-    local entry = selectedEntry()
-
-    if not entry then
-        SelectedBox.Text = "FILE: belum dipilih"
-        SelectedBox.TextColor3 = Theme.dim
-        return
-    end
-
-    if entry.assetId ~= "" then
-        SelectedBox.Text = "FILE: " .. entry.name .. " | ID: " .. entry.assetId
-        SelectedBox.TextColor3 = Theme.ok
-    else
-        SelectedBox.Text = "FILE: " .. entry.name
-        SelectedBox.TextColor3 = Theme.text
-    end
-end
-
-local function renderPicker()
-    for _, child in ipairs(PickerList:GetChildren()) do
-        if child:IsA("TextButton") then
-            child:Destroy()
-        end
-    end
-
-    PickerEmpty.Visible = #entries == 0
-
-    for _, entry in ipairs(entries) do
-        local button = new("TextButton", {
-            BackgroundColor3 = entry.selected and Color3.fromRGB(48, 42, 30) or Theme.panel2,
-            Size = UDim2.new(1, 0, 0, 38),
-            Text = (entry.selected and "✓  " or "    ") .. entry.name,
-            Font = Enum.Font.Code,
-            TextColor3 = entry.selected and Theme.accent or Theme.text,
-            TextSize = 9,
-            TextXAlignment = Enum.TextXAlignment.Left,
-            TextTruncate = Enum.TextTruncate.AtEnd,
-            AutoButtonColor = false,
-            ZIndex = 53
-        }, PickerList)
-        new("UICorner", {CornerRadius = UDim.new(0, 6)}, button)
-
-        button.MouseButton1Click:Connect(function()
-            for _, e in ipairs(entries) do
-                e.selected = false
-            end
-            entry.selected = true
-            updateSelectedBox()
-            PickerOverlay.Visible = false
-            log("Dipilih 1 file: " .. entry.name)
-        end)
-    end
-
-    task.defer(function()
-        PickerList.CanvasSize = UDim2.fromOffset(0, PickerLayout.AbsoluteContentSize.Y + 12)
-    end)
-end
-
-PickBtn.MouseButton1Click:Connect(function()
-    if busy then return end
-
-    if #entries == 0 then
-        log("Belum ada file. Tekan SCAN terlebih dahulu.")
-        return
-    end
-
-    renderPicker()
-    PickerOverlay.Visible = true
-end)
-
-PickerClose.MouseButton1Click:Connect(function()
-    PickerOverlay.Visible = false
-end)
+-- Keep the workspace card compact in the right column.
+WorkCard.Size = UDim2.fromOffset(360, 190)
+WorkCard.AutomaticSize = Enum.AutomaticSize.None
 
 --==============================================================
 -- LOG
 --==============================================================
 
 local LogCard = card("LOG")
-LogCard.Size = UDim2.new(1, -24, 0, 108)
+LogCard.Position = UDim2.fromOffset(12, 312)
+LogCard.Size = UDim2.fromOffset(736, 112)
 LogCard.AutomaticSize = Enum.AutomaticSize.None
 
 local LogBox = new("TextLabel", {
     BackgroundColor3 = Color3.fromRGB(11, 13, 17),
-    Size = UDim2.new(1, 0, 0, 78),
+    Size = UDim2.new(1, 0, 0, 58),
     BorderSizePixel = 0,
     Font = Enum.Font.Code,
     Text = "Ready. Isi API Key + Creator ID, lalu Scan.",
@@ -994,6 +680,9 @@ new("UIPadding", {
     PaddingRight = UDim.new(0, 7)
 }, LogBox)
 new("UICorner", {CornerRadius = UDim.new(0, 7)}, LogBox)
+
+local entries = {}
+local busy = false
 
 local function log(msg)
     local lines = {}
@@ -1020,8 +709,8 @@ local PickerOverlay = new("Frame", {
 }, ScreenGui)
 
 local Picker = new("Frame", {
-    Size = UDim2.fromOffset(320, 410),
-    Position = UDim2.new(0.5, -160, 0.5, -205),
+    Size = UDim2.fromOffset(430, 390),
+    Position = UDim2.new(0.5, -215, 0.5, -195),
     BackgroundColor3 = Theme.bg,
     BorderSizePixel = 0,
     ZIndex = 51
@@ -1061,9 +750,7 @@ local PickerList = new("ScrollingFrame", {
     BorderSizePixel = 0,
     ScrollBarThickness = 4,
     ScrollBarImageColor3 = Theme.line,
-    CanvasSize = UDim2.new(0, 0, 0, 0),
-    AutomaticCanvasSize = Enum.AutomaticSize.Y,
-    Active = true,
+    CanvasSize = UDim2.new(),
     ZIndex = 52
 }, PickerList)
 new("UICorner", {CornerRadius = UDim.new(0, 8)}, PickerList)
@@ -1190,59 +877,23 @@ ScanBtn.MouseButton1Click:Connect(function()
     if busy then return end
 
     ScanBtn.Text = "SCANNING..."
-    FileCount.Text = "Scanning filesystem..."
-    log("Scanning Delta filesystem...")
-
-    if type(listfiles) ~= "function" then
-        log("ERROR: listfiles() tidak tersedia di executor.")
-        log("Tanpa listfiles(), script tidak dapat membaca workspace.")
-        FileCount.Text = "listfiles() tidak tersedia"
-        ScanBtn.Text = "🔄  SCAN"
-        return
-    end
+    log("Scanning Delta workspace...")
 
     task.spawn(function()
-        local ok, found, openedPaths, rootStats = pcall(scanWorkspace)
-
-        if not ok then
-            entries = {}
-            FileCount.Text = "Scanner error"
-            log("ERROR scanner: " .. tostring(found))
-            ScanBtn.Text = "🔄  SCAN"
-            return
-        end
-
-        entries = type(found) == "table" and found or {}
+        local found = scanWorkspace()
+        entries = found
 
         for _, entry in ipairs(entries) do
             entry.selected = false
         end
 
-        FileCount.Text = string.format("%d file .rbxm/.rbxmx ditemukan", #entries)
         updateSelectedBox()
 
-        if type(openedPaths) == "table" and #openedPaths > 0 then
-            log("Root filesystem terbaca: " .. tostring(#openedPaths))
-
-            -- Show which roots actually produced RBXM files.
-            local shown = 0
-            for root, count in pairs(rootStats or {}) do
-                if count > 0 and shown < 3 then
-                    log("FOUND " .. tostring(count) .. " file: " .. root)
-                    shown += 1
-                end
-            end
+        if #found > 0 then
+            log("Scan selesai: " .. #found .. " file ditemukan.")
+            log("Tekan PILIH FILE untuk memilih SATU.")
         else
-            log("ERROR: tidak ada root filesystem yang bisa dibaca.")
-            log("Pastikan listfiles() tersedia di Delta.")
-        end
-
-        if #entries > 0 then
-            log("Scan OK: " .. #entries .. " file ditemukan.")
-            log("Tekan PILIH 1 FILE.")
-        else
-            log("0 RBXM ditemukan dari semua root.")
-            log("Scanner sekarang mencoba /storage/emulated/0 + /sdcard.")
+            log("Tidak ada .rbxm/.rbxmx ditemukan.")
         end
 
         ScanBtn.Text = "🔄  SCAN"
