@@ -150,8 +150,11 @@ local function multipartBody(boundary, requestJson, fileName, fileData)
     parts[#parts + 1] = requestJson .. CRLF
 
     parts[#parts + 1] = "--" .. boundary .. CRLF
+    local lowerName = tostring(fileName):lower()
+    local fileContentType = lowerName:match("%.rbxmx$") and "model/x-rbxm" or "model/x-rbxm"
+
     parts[#parts + 1] = 'Content-Disposition: form-data; name="fileContent"; filename="' .. fileName .. '"' .. CRLF
-    parts[#parts + 1] = "Content-Type: application/octet-stream" .. CRLF .. CRLF
+    parts[#parts + 1] = "Content-Type: " .. fileContentType .. CRLF .. CRLF
     parts[#parts + 1] = fileData
     parts[#parts + 1] = CRLF
     parts[#parts + 1] = "--" .. boundary .. "--" .. CRLF
@@ -220,7 +223,11 @@ local function uploadRequest(apiKey, creatorId, creatorType, assetType, fileName
     end
 
     if status < 200 or status >= 300 then
-        return nil, tostring(data.message or data.error or ("HTTP " .. status))
+        local msg = data.message or data.error or ("HTTP " .. status)
+        if type(msg) == "table" then
+            msg = msg.message or msg.code or HttpService:JSONEncode(msg)
+        end
+        return nil, tostring(msg) .. " [HTTP " .. tostring(status) .. "]"
     end
 
     if not data.path then
@@ -509,8 +516,10 @@ new("UICorner", {CornerRadius = UDim.new(0, 7)}, ShowBtn)
 local keyVisible = false
 ShowBtn.MouseButton1Click:Connect(function()
     keyVisible = not keyVisible
-    KeyBox.TextTransparency = keyVisible and 0 or 0
-    KeyBox.Text = KeyBox.Text
+    KeyBox.TextTransparency = 0
+    KeyBox.TextStrokeTransparency = 1
+    KeyBox.TextEditable = true
+    KeyBox:SetAttribute("KeyVisible", keyVisible)
     ShowBtn.Text = keyVisible and "HIDE" or "SHOW"
 end)
 
