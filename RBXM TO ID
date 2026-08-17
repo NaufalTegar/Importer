@@ -3,16 +3,57 @@
 --// Reads .rbxm files from Delta workspace using the same filesystem approach
 --// as the supplied HYAZ Ultimate script.
 
-if not game:IsLoaded() then game.Loaded:Wait() end
+-- Safe executor bootstrap.
+-- Do not call game:IsLoaded()/game.Loaded before the UI exists: some
+-- mobile executor environments expose these differently during injection.
 
-local Players = game:GetService("Players")
-local HttpService = game:GetService("HttpService")
-local UserInputService = game:GetService("UserInputService")
-local TweenService = game:GetService("TweenService")
-local CoreGui = game:GetService("CoreGui")
+local function svc(name)
+    local ok, result = pcall(function()
+        return game:GetService(name)
+    end)
+    if ok then
+        return result
+    end
+    return nil
+end
+
+local Players = svc("Players")
+local HttpService = svc("HttpService")
+local UserInputService = svc("UserInputService")
+local TweenService = svc("TweenService")
+local CoreGui = svc("CoreGui")
+
+if not Players then
+    error("HYAZ: Players service is unavailable in this executor.")
+end
 
 local LocalPlayer = Players.LocalPlayer
-local GuiParent = (pcall(function() return CoreGui.Name end) and CoreGui) or LocalPlayer:WaitForChild("PlayerGui")
+if not LocalPlayer then
+    error("HYAZ: LocalPlayer is unavailable. Execute after joining the game.")
+end
+
+local GuiParent = nil
+if CoreGui then
+    local ok = pcall(function()
+        GuiParent = CoreGui
+    end)
+end
+
+if not GuiParent then
+    local ok, playerGui = pcall(function()
+        return LocalPlayer:FindFirstChildOfClass("PlayerGui")
+    end)
+
+    if ok and playerGui then
+        GuiParent = playerGui
+    else
+        GuiParent = LocalPlayer:WaitForChild("PlayerGui", 10)
+    end
+end
+
+if not GuiParent then
+    error("HYAZ: PlayerGui/CoreGui is unavailable.")
+end
 
 --==============================================================
 -- CONFIG
@@ -708,4 +749,672 @@ local PickBtn = new("TextButton", {
     TextColor3 = Theme.text,
     TextSize = 10,
     AutoButtonColor = false
-}, 
+}, ScanPickRow)
+new("UICorner", {CornerRadius = UDim.new(0, 7)}, PickBtn)
+
+local FileCount = new("TextLabel", {
+    BackgroundTransparency = 1,
+    Size = UDim2.new(1, 0, 0, 17),
+    Text = "Belum scan workspace",
+    Font = Enum.Font.Code,
+    TextColor3 = Theme.dim,
+    TextSize = 9,
+    TextXAlignment = Enum.TextXAlignment.Left
+}, WorkCard)
+
+local SelectedBox = new("TextLabel", {
+    BackgroundColor3 = Theme.panel2,
+    Size = UDim2.new(1, 0, 0, 38),
+    Text = "FILE: belum dipilih",
+    Font = Enum.Font.Code,
+    TextColor3 = Theme.dim,
+    TextSize = 9,
+    TextXAlignment = Enum.TextXAlignment.Left,
+    TextTruncate = Enum.TextTruncate.AtEnd
+}, WorkCard)
+new("UICorner", {CornerRadius = UDim.new(0, 7)}, SelectedBox)
+new("UIPadding", {PaddingLeft = UDim.new(0, 9), PaddingRight = UDim.new(0, 9)}, SelectedBox)
+
+local UploadBtn = new("TextButton", {
+    BackgroundColor3 = Theme.panel2,
+    Size = UDim2.new(1, 0, 0, 38),
+    Text = "UPLOAD FILE TERPILIH",
+    Font = Enum.Font.GothamBold,
+    TextColor3 = Theme.text,
+    TextSize = 10,
+    AutoButtonColor = false
+}, WorkCard)
+new("UICorner", {CornerRadius = UDim.new(0, 7)}, UploadBtn)
+
+-- Popup selector: the main UI never lists/uploads all files.
+local PickerOverlay = new("Frame", {
+    Name = "SingleFilePicker",
+    Size = UDim2.fromScale(1, 1),
+    BackgroundColor3 = Color3.fromRGB(0, 0, 0),
+    BackgroundTransparency = 0.32,
+    Visible = false,
+    ZIndex = 50
+}, ScreenGui)
+
+local Picker = new("Frame", {
+    Size = UDim2.fromOffset(500, 320),
+    Position = UDim2.new(0.5, -250, 0.5, -160),
+    BackgroundColor3 = Theme.bg,
+    BorderSizePixel = 0,
+    ZIndex = 51
+}, PickerOverlay)
+new("UICorner", {CornerRadius = UDim.new(0, 11)}, Picker)
+new("UIStroke", {Color = Theme.line, Thickness = 1}, Picker)
+
+new("TextLabel", {
+    BackgroundTransparency = 1,
+    Position = UDim2.fromOffset(10, 8),
+    Size = UDim2.new(1, -52, 0, 22),
+    Font = Enum.Font.GothamBold,
+    Text = "PILIH SATU FILE",
+    TextColor3 = Theme.text,
+    TextSize = 12,
+    TextXAlignment = Enum.TextXAlignment.Left,
+    ZIndex = 52
+}, Picker)
+
+local PickerClose = new("TextButton", {
+    BackgroundColor3 = Theme.panel2,
+    Position = UDim2.new(1, -38, 0, 7),
+    Size = UDim2.fromOffset(28, 28),
+    Text = "×",
+    Font = Enum.Font.GothamBold,
+    TextColor3 = Theme.text,
+    TextSize = 17,
+    AutoButtonColor = false,
+    ZIndex = 52
+}, Picker)
+new("UICorner", {CornerRadius = UDim.new(0, 6)}, PickerClose)
+
+local PickerHint = new("TextLabel", {
+    BackgroundTransparency = 1,
+    Position = UDim2.fromOffset(10, 37),
+    Size = UDim2.new(1, -20, 0, 18),
+    Text = "Sentuh salah satu .rbxm untuk memilihnya.",
+    Font = Enum.Font.Code,
+    TextColor3 = Theme.dim,
+    TextSize = 8,
+    TextXAlignment = Enum.TextXAlignment.Left,
+    ZIndex = 52
+}, Picker)
+
+local PickerList = new("ScrollingFrame", {
+    Active = true,
+    ScrollingDirection = Enum.ScrollingDirection.Y,
+    Position = UDim2.fromOffset(8, 60),
+    Size = UDim2.new(1, -16, 1, -68),
+    BackgroundColor3 = Theme.panel,
+    BorderSizePixel = 0,
+    ScrollBarThickness = 4,
+    ScrollBarImageColor3 = Theme.line,
+    CanvasSize = UDim2.new(),
+    ZIndex = 52
+}, Picker)
+new("UICorner", {CornerRadius = UDim.new(0, 8)}, PickerList)
+
+local PickerLayout = new("UIListLayout", {
+    Padding = UDim.new(0, 4),
+    SortOrder = Enum.SortOrder.LayoutOrder
+}, PickerList)
+PickerLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
+    PickerList.CanvasSize = UDim2.fromOffset(0, PickerLayout.AbsoluteContentSize.Y + 14)
+end)
+
+new("UIPadding", {
+    PaddingTop = UDim.new(0, 6),
+    PaddingBottom = UDim.new(0, 6),
+    PaddingLeft = UDim.new(0, 6),
+    PaddingRight = UDim.new(0, 6)
+}, PickerList)
+
+local PickerEmpty = new("TextLabel", {
+    BackgroundTransparency = 1,
+    Size = UDim2.new(1, -12, 0, 45),
+    Text = "Tidak ada file.\nTekan SCAN.",
+    Font = Enum.Font.Code,
+    TextColor3 = Theme.dim,
+    TextSize = 9,
+    TextWrapped = true,
+    ZIndex = 53
+}, PickerList)
+
+local function selectedEntry()
+    for _, entry in ipairs(entries) do
+        if entry.selected == true then
+            return entry
+        end
+    end
+    return nil
+end
+
+local function updateSelectedBox()
+    local entry = selectedEntry()
+
+    if not entry then
+        SelectedBox.Text = "FILE: belum dipilih"
+        SelectedBox.TextColor3 = Theme.dim
+        return
+    end
+
+    if entry.assetId ~= "" then
+        SelectedBox.Text = "FILE: " .. entry.name .. " | ID: " .. entry.assetId
+        SelectedBox.TextColor3 = Theme.ok
+    else
+        SelectedBox.Text = "FILE: " .. entry.name
+        SelectedBox.TextColor3 = Theme.text
+    end
+end
+
+local function renderPicker()
+    for _, child in ipairs(PickerList:GetChildren()) do
+        if child:IsA("TextButton") then
+            child:Destroy()
+        end
+    end
+
+    PickerEmpty.Visible = #entries == 0
+
+    for _, entry in ipairs(entries) do
+        local button = new("TextButton", {
+            BackgroundColor3 = entry.selected and Color3.fromRGB(48, 42, 30) or Theme.panel2,
+            Size = UDim2.new(1, 0, 0, 38),
+            Text = (entry.selected and "✓  " or "    ") .. entry.name,
+            Font = Enum.Font.Code,
+            TextColor3 = entry.selected and Theme.accent or Theme.text,
+            TextSize = 9,
+            TextXAlignment = Enum.TextXAlignment.Left,
+            TextTruncate = Enum.TextTruncate.AtEnd,
+            AutoButtonColor = false,
+            ZIndex = 53
+        }, PickerList)
+        new("UICorner", {CornerRadius = UDim.new(0, 6)}, button)
+
+        button.MouseButton1Click:Connect(function()
+            for _, e in ipairs(entries) do
+                e.selected = false
+            end
+            entry.selected = true
+            updateSelectedBox()
+            PickerOverlay.Visible = false
+            log("Dipilih 1 file: " .. entry.name)
+        end)
+    end
+
+    task.defer(function()
+        PickerList.CanvasSize = UDim2.fromOffset(0, PickerLayout.AbsoluteContentSize.Y + 12)
+    end)
+end
+
+PickBtn.MouseButton1Click:Connect(function()
+    if busy then return end
+
+    if #entries == 0 then
+        log("Belum ada file. Tekan SCAN terlebih dahulu.")
+        return
+    end
+
+    renderPicker()
+    PickerOverlay.Visible = true
+end)
+
+PickerClose.MouseButton1Click:Connect(function()
+    PickerOverlay.Visible = false
+end)
+
+--==============================================================
+-- LOG
+--==============================================================
+
+local LogCard = card("LOG")
+LogCard.Size = UDim2.new(1, -24, 0, 108)
+LogCard.AutomaticSize = Enum.AutomaticSize.None
+
+local LogBox = new("TextLabel", {
+    BackgroundColor3 = Color3.fromRGB(11, 13, 17),
+    Size = UDim2.new(1, 0, 0, 78),
+    BorderSizePixel = 0,
+    Font = Enum.Font.Code,
+    Text = "Ready. Isi API Key + Creator ID, lalu Scan.",
+    TextColor3 = Theme.dim,
+    TextSize = 9,
+    TextWrapped = true,
+    TextXAlignment = Enum.TextXAlignment.Left,
+    TextYAlignment = Enum.TextYAlignment.Top
+}, LogCard)
+
+new("UIPadding", {
+    PaddingTop = UDim.new(0, 7),
+    PaddingBottom = UDim.new(0, 7),
+    PaddingLeft = UDim.new(0, 7),
+    PaddingRight = UDim.new(0, 7)
+}, LogBox)
+new("UICorner", {CornerRadius = UDim.new(0, 7)}, LogBox)
+
+local function log(msg)
+    local lines = {}
+    for line in (LogBox.Text .. "\n" .. tostring(msg)):gmatch("[^\n]+") do
+        table.insert(lines, line)
+    end
+    while #lines > 7 do
+        table.remove(lines, 1)
+    end
+    LogBox.Text = table.concat(lines, "\n")
+end
+
+--==============================================================
+-- SINGLE-FILE PICKER POPUP
+--==============================================================
+
+local PickerOverlay = new("Frame", {
+    Name = "FilePickerOverlay",
+    Size = UDim2.fromScale(1, 1),
+    BackgroundColor3 = Color3.fromRGB(0, 0, 0),
+    BackgroundTransparency = 0.30,
+    Visible = false,
+    ZIndex = 50
+}, ScreenGui)
+
+local Picker = new("Frame", {
+    Size = UDim2.fromOffset(320, 410),
+    Position = UDim2.new(0.5, -160, 0.5, -205),
+    BackgroundColor3 = Theme.bg,
+    BorderSizePixel = 0,
+    ZIndex = 51
+}, PickerOverlay)
+new("UICorner", {CornerRadius = UDim.new(0, 11)}, Picker)
+new("UIStroke", {Color = Theme.line, Thickness = 1}, Picker)
+
+new("TextLabel", {
+    BackgroundTransparency = 1,
+    Position = UDim2.fromOffset(12, 9),
+    Size = UDim2.new(1, -58, 0, 24),
+    Font = Enum.Font.GothamBold,
+    Text = "PILIH SATU FILE .RBXM",
+    TextColor3 = Theme.text,
+    TextSize = 12,
+    TextXAlignment = Enum.TextXAlignment.Left,
+    ZIndex = 52
+}, Picker)
+
+local PickerClose = new("TextButton", {
+    BackgroundColor3 = Theme.panel2,
+    Position = UDim2.new(1, -40, 0, 8),
+    Size = UDim2.fromOffset(28, 28),
+    Text = "×",
+    Font = Enum.Font.GothamBold,
+    TextColor3 = Theme.text,
+    TextSize = 17,
+    AutoButtonColor = false,
+    ZIndex = 52
+}, Picker)
+new("UICorner", {CornerRadius = UDim.new(0, 6)}, PickerClose)
+
+local PickerList = new("ScrollingFrame", {
+    Position = UDim2.fromOffset(10, 45),
+    Size = UDim2.new(1, -20, 1, -55),
+    BackgroundColor3 = Theme.panel,
+    BorderSizePixel = 0,
+    ScrollBarThickness = 4,
+    ScrollBarImageColor3 = Theme.line,
+    CanvasSize = UDim2.new(0, 0, 0, 0),
+    AutomaticCanvasSize = Enum.AutomaticSize.Y,
+    Active = true,
+    ZIndex = 52
+}, PickerList)
+new("UICorner", {CornerRadius = UDim.new(0, 8)}, PickerList)
+
+local PickerLayout = new("UIListLayout", {
+    Padding = UDim.new(0, 4),
+    SortOrder = Enum.SortOrder.LayoutOrder
+}, PickerList)
+
+new("UIPadding", {
+    PaddingTop = UDim.new(0, 6),
+    PaddingBottom = UDim.new(0, 6),
+    PaddingLeft = UDim.new(0, 6),
+    PaddingRight = UDim.new(0, 6)
+}, PickerList)
+
+local PickerEmpty = new("TextLabel", {
+    BackgroundTransparency = 1,
+    Size = UDim2.new(1, -12, 0, 55),
+    Font = Enum.Font.Code,
+    Text = "Belum ada file.\nTekan SCAN terlebih dahulu.",
+    TextColor3 = Theme.dim,
+    TextSize = 10,
+    TextWrapped = true,
+    ZIndex = 53
+}, PickerList)
+
+local function selectedEntry()
+    for _, entry in ipairs(entries) do
+        if entry.selected == true then
+            return entry
+        end
+    end
+    return nil
+end
+
+local function updateSelectedBox()
+    local entry = selectedEntry()
+
+    if not entry then
+        SelectedBox.Text = "Belum memilih file"
+        SelectedBox.TextColor3 = Theme.dim
+        return
+    end
+
+    if entry.assetId ~= "" then
+        SelectedBox.Text = "✓  " .. entry.name .. "  |  ID: " .. entry.assetId
+        SelectedBox.TextColor3 = Theme.ok
+    else
+        SelectedBox.Text = "✓  " .. entry.name
+        SelectedBox.TextColor3 = Theme.text
+    end
+end
+
+local function closePicker()
+    PickerOverlay.Visible = false
+end
+
+local function chooseEntry(entry)
+    for _, e in ipairs(entries) do
+        e.selected = false
+    end
+
+    entry.selected = true
+    updateSelectedBox()
+    closePicker()
+    log("Dipilih: " .. entry.name)
+end
+
+local function renderPicker()
+    for _, child in ipairs(PickerList:GetChildren()) do
+        if child:IsA("TextButton") then
+            child:Destroy()
+        end
+    end
+
+    PickerEmpty.Visible = #entries == 0
+
+    for _, entry in ipairs(entries) do
+        local button = new("TextButton", {
+            BackgroundColor3 = entry.selected and Color3.fromRGB(48, 42, 30) or Theme.panel2,
+            Size = UDim2.new(1, 0, 0, 40),
+            Text = "  " .. entry.name,
+            Font = Enum.Font.Code,
+            TextColor3 = entry.selected and Theme.accent or Theme.text,
+            TextSize = 10,
+            TextXAlignment = Enum.TextXAlignment.Left,
+            TextTruncate = Enum.TextTruncate.AtEnd,
+            AutoButtonColor = false,
+            ZIndex = 53
+        }, PickerList)
+
+        new("UICorner", {CornerRadius = UDim.new(0, 6)}, button)
+
+        button.MouseButton1Click:Connect(function()
+            chooseEntry(entry)
+        end)
+    end
+
+    task.defer(function()
+        PickerList.CanvasSize = UDim2.fromOffset(0, PickerLayout.AbsoluteContentSize.Y + 12)
+    end)
+end
+
+PickBtn.MouseButton1Click:Connect(function()
+    if busy then return end
+
+    if #entries == 0 then
+        log("Belum ada file. Tekan SCAN terlebih dahulu.")
+        return
+    end
+
+    renderPicker()
+    PickerOverlay.Visible = true
+end)
+
+PickerClose.MouseButton1Click:Connect(closePicker)
+
+--==============================================================
+-- SCAN
+--==============================================================
+
+ScanBtn.MouseButton1Click:Connect(function()
+    if busy then return end
+
+    ScanBtn.Text = "SCANNING..."
+    FileCount.Text = "Scanning filesystem..."
+    log("Scanning Delta filesystem...")
+
+    if type(listfiles) ~= "function" then
+        log("ERROR: listfiles() tidak tersedia di executor.")
+        log("Tanpa listfiles(), script tidak dapat membaca workspace.")
+        FileCount.Text = "listfiles() tidak tersedia"
+        ScanBtn.Text = "🔄  SCAN"
+        return
+    end
+
+    task.spawn(function()
+        local ok, found, openedPaths, rootStats = pcall(scanWorkspace)
+
+        if not ok then
+            entries = {}
+            FileCount.Text = "Scanner error"
+            log("ERROR scanner: " .. tostring(found))
+            ScanBtn.Text = "🔄  SCAN"
+            return
+        end
+
+        entries = type(found) == "table" and found or {}
+
+        for _, entry in ipairs(entries) do
+            entry.selected = false
+        end
+
+        FileCount.Text = string.format("%d file .rbxm/.rbxmx ditemukan", #entries)
+        updateSelectedBox()
+
+        if type(openedPaths) == "table" and #openedPaths > 0 then
+            log("Root filesystem terbaca: " .. tostring(#openedPaths))
+
+            -- Show which roots actually produced RBXM files.
+            local shown = 0
+            for root, count in pairs(rootStats or {}) do
+                if count > 0 and shown < 3 then
+                    log("FOUND " .. tostring(count) .. " file: " .. root)
+                    shown += 1
+                end
+            end
+        else
+            log("ERROR: tidak ada root filesystem yang bisa dibaca.")
+            log("Pastikan listfiles() tersedia di Delta.")
+        end
+
+        if #entries > 0 then
+            log("Scan OK: " .. #entries .. " file ditemukan.")
+            log("Tekan PILIH 1 FILE.")
+        else
+            log("0 RBXM ditemukan dari semua root.")
+            log("Scanner sekarang mencoba /storage/emulated/0 + /sdcard.")
+        end
+
+        ScanBtn.Text = "🔄  SCAN"
+    end)
+end)
+
+--==============================================================
+-- UPLOAD ONE SELECTED FILE ONLY
+--==============================================================
+
+local function uploadOne(entry)
+    entry.status = "pending"
+    updateSelectedBox()
+
+    local apiKey = KeyBox.Text:gsub("^%s+", ""):gsub("%s+$", "")
+    local creatorId = CreatorBox.Text:gsub("^%s+", ""):gsub("%s+$", "")
+
+    local data = safeReadFile(entry.path)
+    if not data or #data == 0 then
+        entry.status = "ERR"
+        updateSelectedBox()
+        log(entry.name .. ": readfile gagal.")
+        return false
+    end
+
+    log("Uploading 1 file: " .. entry.name)
+
+    local op, err = uploadRequest(
+        apiKey,
+        creatorId,
+        creatorType,
+        assetType,
+        entry.name,
+        data
+    )
+
+    if not op then
+        entry.status = "ERR"
+        updateSelectedBox()
+        log(entry.name .. ": " .. tostring(err))
+        return false
+    end
+
+    local assetId, pollErr = pollOperation(op.path, apiKey, log)
+
+    if not assetId then
+        entry.status = "ERR"
+        updateSelectedBox()
+        log(entry.name .. ": " .. tostring(pollErr))
+        return false
+    end
+
+    entry.status = "OK"
+    entry.assetId = assetId
+    updateSelectedBox()
+    log(entry.name .. ": OK -> " .. assetId)
+
+    return true
+end
+
+UploadBtn.MouseButton1Click:Connect(function()
+    if busy then return end
+
+    local apiKey = KeyBox.Text:gsub("^%s+", ""):gsub("%s+$", "")
+    local creatorId = CreatorBox.Text:gsub("^%s+", ""):gsub("%s+$", "")
+    local entry = selectedEntry()
+
+    if apiKey == "" then
+        log("ERROR: Isi API Key terlebih dahulu.")
+        return
+    end
+
+    if creatorId == "" or not creatorId:match("^%d+$") then
+        log("ERROR: Creator ID harus berupa angka.")
+        return
+    end
+
+    if not entry then
+        log("ERROR: Pilih satu file terlebih dahulu.")
+        return
+    end
+
+    busy = true
+    UploadBtn.Text = "UPLOADING 1 FILE..."
+    UploadBtn.BackgroundColor3 = Theme.pending
+
+    task.spawn(function()
+        local ok = uploadOne(entry)
+
+        busy = false
+        UploadBtn.Text = "UPLOAD FILE TERPILIH"
+        UploadBtn.BackgroundColor3 = Theme.panel2
+
+        if ok then
+            log("Upload selesai: " .. entry.name)
+        else
+            log("Upload gagal: " .. entry.name)
+        end
+    end)
+end)
+
+--==============================================================
+-- MINIMIZE / RESTORE
+--==============================================================
+
+local Mini = new("TextButton", {
+    Name = "HYAZ_Mini",
+    Size = UDim2.fromOffset(58, 58),
+    Position = UDim2.new(0, 20, 0.5, -29),
+    BackgroundColor3 = Theme.panel,
+    BorderSizePixel = 0,
+    Text = "👑",
+    Font = Enum.Font.GothamBold,
+    TextSize = 27,
+    TextColor3 = Theme.accent,
+    Visible = false,
+    AutoButtonColor = false
+}, ScreenGui)
+new("UICorner", {CornerRadius = UDim.new(1, 0)}, Mini)
+new("UIStroke", {Color = Theme.accent, Thickness = 1}, Mini)
+
+MinBtn.MouseButton1Click:Connect(function()
+    Main.Visible = false
+    Mini.Visible = true
+end)
+
+Mini.MouseButton1Click:Connect(function()
+    Mini.Visible = false
+    Main.Visible = true
+end)
+
+CloseBtn.MouseButton1Click:Connect(function()
+    ScreenGui:Destroy()
+end)
+
+--==============================================================
+-- DRAGGABLE WINDOW
+--==============================================================
+
+local dragging = false
+local dragStart
+local startPos
+
+Header.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1
+        or input.UserInputType == Enum.UserInputType.Touch then
+        dragging = true
+        dragStart = input.Position
+        startPos = Main.Position
+    end
+end)
+
+UserInputService.InputChanged:Connect(function(input)
+    if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement
+        or input.UserInputType == Enum.UserInputType.Touch) then
+
+        local delta = input.Position - dragStart
+        Main.Position = UDim2.new(
+            startPos.X.Scale,
+            startPos.X.Offset + delta.X,
+            startPos.Y.Scale,
+            startPos.Y.Offset + delta.Y
+        )
+    end
+end)
+
+UserInputService.InputEnded:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1
+        or input.UserInputType == Enum.UserInputType.Touch then
+        dragging = false
+    end
+end)
+
+updateSelectedBox()
+log("HYAZ RBXM > ASSET ID loaded.")
