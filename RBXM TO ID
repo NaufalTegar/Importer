@@ -22,15 +22,18 @@ local APP_NAME = "HYAZ_RBXM_ASSET_ID"
 local API_URL = "https://apis.roblox.com/assets/v1/assets"
 
 local SCAN_PATHS = {
-    "workspace",
+    "emulator/android/delta/workspace",
+    "emulator/Android/Delta/workspace",
+    "emulator/android/Delta/workspace",
+    "Emulator/Android/Delta/workspace",
+    "Android/Delta/workspace",
+    "Android/delta/workspace",
     "Delta/workspace",
     "delta/workspace",
-    "Android/Delta/workspace",
-    "/sdcard/Delta/workspace",
     "/sdcard/Android/Delta/workspace",
-    "../workspace",
-    ".",
-    ""
+    "/sdcard/android/delta/workspace",
+    "/sdcard/Delta/workspace",
+    "workspace"
 }
 
 --==============================================================
@@ -92,9 +95,12 @@ end
 
 local function scanWorkspace()
     local results, seen = {}, {}
+    local opened = {}
 
     for _, path in ipairs(SCAN_PATHS) do
-        if safeListFiles(path) then
+        local list = safeListFiles(path)
+        if type(list) == "table" then
+            opened[#opened + 1] = path
             scanDeep(path, 0, results, seen)
         end
     end
@@ -103,7 +109,7 @@ local function scanWorkspace()
         return a.name:lower() < b.name:lower()
     end)
 
-    return results
+    return results, opened
 end
 
 --==============================================================
@@ -309,8 +315,8 @@ local ScreenGui = new("ScreenGui", {
 
 local Main = new("Frame", {
     Name = "Main",
-    Size = UDim2.fromOffset(330, 500),
-    Position = UDim2.new(0.5, -165, 0.5, -250),
+    Size = UDim2.fromOffset(680, 420),
+    Position = UDim2.new(0.5, -340, 0.5, -210),
     BackgroundColor3 = Theme.bg,
     BorderSizePixel = 0
 }, ScreenGui)
@@ -372,6 +378,8 @@ local CloseBtn = new("TextButton", {
 new("UICorner", {CornerRadius = UDim.new(0, 7)}, CloseBtn)
 
 local Content = new("ScrollingFrame", {
+    Active = true,
+    ScrollingDirection = Enum.ScrollingDirection.Y,
     Position = UDim2.fromOffset(0, 52),
     Size = UDim2.new(1, 0, 1, -52),
     BackgroundTransparency = 1,
@@ -382,8 +390,12 @@ local Content = new("ScrollingFrame", {
 }, Main)
 
 local Layout = new("UIListLayout", {
-    Padding = UDim.new(0, 6),
-    SortOrder = Enum.SortOrder.LayoutOrder
+    Padding = UDim.new(0, 8),
+    FillDirection = Enum.FillDirection.Horizontal,
+    HorizontalAlignment = Enum.HorizontalAlignment.Left,
+    VerticalAlignment = Enum.VerticalAlignment.Top,
+    SortOrder = Enum.SortOrder.LayoutOrder,
+    Wraps = true
 }, Content)
 
 new("UIPadding", {
@@ -392,12 +404,15 @@ new("UIPadding", {
     PaddingLeft = UDim.new(0, 12),
     PaddingRight = UDim.new(0, 12)
 }, Content)
+Layout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
+    Content.CanvasSize = UDim2.fromOffset(0, Layout.AbsoluteContentSize.Y + 20)
+end)
 
 local function card(title)
     local frame = new("Frame", {
         BackgroundColor3 = Theme.panel,
         BorderSizePixel = 0,
-        Size = UDim2.new(1, -24, 0, 10),
+        Size = UDim2.new(0.5, -18, 0, 10),
         AutomaticSize = Enum.AutomaticSize.Y
     }, Content)
 
@@ -556,11 +571,21 @@ AssetTypeBtn.MouseButton1Click:Connect(function()
     AssetTypeBtn.Text = assetType .. "  ▼"
 end)
 
+-- Two-column landscape layout: credentials on the left, workspace on the right.
+CredCard.Size = UDim2.new(0.5, -18, 0, 270)
+CredCard.AutomaticSize = Enum.AutomaticSize.None
+
 --==============================================================
 -- WORKSPACE / SINGLE FILE PICKER
 --==============================================================
 
+-- IMPORTANT: initialize before button callbacks are connected.
+local entries = {}
+local busy = false
+
 local WorkCard = card("WORKSPACE")
+WorkCard.Size = UDim2.new(0.5, -18, 0, 270)
+WorkCard.AutomaticSize = Enum.AutomaticSize.None
 
 local ScanPickRow = new("Frame", {
     BackgroundTransparency = 1,
@@ -635,8 +660,8 @@ local PickerOverlay = new("Frame", {
 }, ScreenGui)
 
 local Picker = new("Frame", {
-    Size = UDim2.fromOffset(300, 390),
-    Position = UDim2.new(0.5, -150, 0.5, -195),
+    Size = UDim2.fromOffset(500, 320),
+    Position = UDim2.new(0.5, -250, 0.5, -160),
     BackgroundColor3 = Theme.bg,
     BorderSizePixel = 0,
     ZIndex = 51
@@ -682,6 +707,9 @@ local PickerHint = new("TextLabel", {
 }, Picker)
 
 local PickerList = new("ScrollingFrame", {
+    Active = true,
+    ScrollingEnabled = true,
+    ScrollingDirection = Enum.ScrollingDirection.Y,
     Position = UDim2.fromOffset(8, 60),
     Size = UDim2.new(1, -16, 1, -68),
     BackgroundColor3 = Theme.panel,
@@ -697,6 +725,9 @@ local PickerLayout = new("UIListLayout", {
     Padding = UDim.new(0, 4),
     SortOrder = Enum.SortOrder.LayoutOrder
 }, PickerList)
+PickerLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
+    PickerList.CanvasSize = UDim2.fromOffset(0, PickerLayout.AbsoluteContentSize.Y + 14)
+end)
 
 new("UIPadding", {
     PaddingTop = UDim.new(0, 6),
@@ -804,6 +835,8 @@ end)
 --==============================================================
 
 local LogCard = card("LOG")
+LogCard.Size = UDim2.new(1, -24, 0, 108)
+LogCard.AutomaticSize = Enum.AutomaticSize.None
 
 local LogBox = new("TextLabel", {
     BackgroundColor3 = Color3.fromRGB(11, 13, 17),
@@ -825,9 +858,6 @@ new("UIPadding", {
     PaddingRight = UDim.new(0, 7)
 }, LogBox)
 new("UICorner", {CornerRadius = UDim.new(0, 7)}, LogBox)
-
-local entries = {}
-local busy = false
 
 local function log(msg)
     local lines = {}
@@ -1025,20 +1055,28 @@ ScanBtn.MouseButton1Click:Connect(function()
     log("Scanning Delta workspace...")
 
     task.spawn(function()
-        local found = scanWorkspace()
-        entries = found
+        local found, openedPaths = scanWorkspace()
+        entries = type(found) == "table" and found or {}
 
         for _, entry in ipairs(entries) do
             entry.selected = false
         end
 
+        FileCount.Text = string.format("%d file .rbxm/.rbxmx ditemukan", #entries)
         updateSelectedBox()
 
-        if #found > 0 then
-            log("Scan selesai: " .. #found .. " file ditemukan.")
-            log("Tekan PILIH FILE untuk memilih SATU.")
+        if #openedPaths > 0 then
+            log("Workspace path ditemukan: " .. openedPaths[1])
         else
-            log("Tidak ada .rbxm/.rbxmx ditemukan.")
+            log("ERROR: Delta workspace tidak dapat dibaca.")
+            log("Cek path: emulator/android/delta/workspace")
+        end
+
+        if #entries > 0 then
+            log("Scan selesai: " .. #entries .. " file ditemukan.")
+            log("Tekan PILIH 1 FILE untuk memilih satu.")
+        else
+            log("Tidak ada .rbxm/.rbxmx pada workspace.")
         end
 
         ScanBtn.Text = "🔄  SCAN"
