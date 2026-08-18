@@ -369,140 +369,115 @@ local function doTerrainFill(T, pos, size, shape, matE, rot)
 	elseif shape=="Silinder" then T:FillCylinder(cf*CFrame.Angles(0,0,math.rad(90)),size.Y,accRadius,matE)
 	else T:FillBlock(cf,accSize,matE) end
 end
--- ═══════════════════════════════════════════════
--- ⚡ V16 NATURAL: seed & noise (tempel sebelum applyTerrainForPart)
--- ═══════════════════════════════════════════════
-local _TBnaturalSeed = _TB.naturalStrength or 4
-local _TBnaturalDensity = _TB.naturalDensity or 3
 
-local function hash2d(cx, cz)
-    local h = (cx * 374761393 + cz * 668265263)
-    h = (h ~ (h >> 13)) * 1274126177
-    h = h ~ (h >> 16)
-    return math.abs(h % 100000)
+-- ═══ V16 NATURAL: Part→Terrain dibuat natural & unik ═══
+local function hash2d(cx,cz)
+	local h=(cx*374761393+cz*668265263)
+	h=(h ~ (h>>13))*1274126177
+	h=h ~ (h>>16)
+	return math.abs(h%100000)
 end
-
-local function makePartSeed(px, py, pz)
-    local base = hash2d(math.floor(px/4), math.floor(pz/4))
-    return (base + math.floor(py * 3.7) + math.random(0, 400)) % 100000
+local function makePartSeed(px,py,pz)
+	local base=hash2d(math.floor(px/4),math.floor(pz/4))
+	return (base+math.floor(py*3.7)+math.random(0,400))%100000
 end
-
 local function noise1(n)
-    n = (n << 13) ~ n
-    n = (n * (n * n * 15731 + 789221) + 1376312589)
-    return math.abs(math.sin(n))
+	n=(n<<13)~n
+	n=(n*(n*n*15731+789221)+1376312589)
+	return math.abs(math.sin(n))
 end
-
-local function naturalHeightOffset(cx, cz, seed, strength, density)
-    local s = density or 3
-    local amp = (strength or 4) * 2
-    local h = 0
-    for oct = 0, 2 do
-        local f  = s + oct
-        local nx = (cx / f) + seed % 97
-        local nz = (cz / f) + (seed % 89)
-        h = h + math.sin(nx * 2.3 + seed % 13) * math.sin(nz * 1.7 + seed % 7) * (amp / (oct + 1))
-    end
-    h = h + (noise1(cx * 13 + seed) - 0.5) * (amp * 0.4)
-    return h
+local function naturalHeightOffset(cx,cz,seed,strength,density)
+	local s=density or 3
+	local amp=(strength or 4)*2
+	local h=0
+	for oct=0,2 do
+		local f=s+oct
+		local nx=(cx/f)+seed%97
+		local nz=(cz/f)+seed%89
+		h=h+math.sin(nx*2.3+seed%13)*math.sin(nz*1.7+seed%7)*(amp/(oct+1))
+	end
+	h=h+(noise1(cx*13+seed)-0.5)*(amp*0.4)
+	return h
 end
-
-local function bakeNaturalBlock(T, center, partSize, matE, seed, strength, density)
-    local filled = 0
-    local g = 4
-    local wHalf = partSize.X / 2
-    local dHalf = partSize.Z / 2
-    local hBase = partSize.Y / 2
-    for wx = -wHalf, wHalf, g do
-        for wz = -dHalf, dHalf, g do
-            local cellSeed = seed + hash2d(math.floor(wx), math.floor(wz)) % 500
-            local holeN = noise1(math.floor((wx + wz) * 3.7) + cellSeed)
-            local isHole = holeN < 0.16  -- 16% jadi lubang
-            local relief = naturalHeightOffset(wx, wz, cellSeed, strength, density)
-            local topY  = relief
-            local baseY = -hBase * 0.8
-            if not isHole then
-                for ty = baseY, topY, g do
-                    local wxg = center.X + wx
-                    local wzg = center.Z + wz
-                    local wy  = center.Y + ty
-                    T:FillBlock(CFrame.new(wxg, wy, wzg), Vector3.new(g, g, g), matE)
-                    filled = filled + 1
-                end
-            else
-                T:FillBlock(CFrame.new(center.X + wx, center.Y - hBase * 0.8, center.Z + wz), Vector3.new(g, g, g), matE)
-                filled = filled + 1
-            end
-        end
-        task.wait()
-    end
-    return filled
+local function bakeNaturalBlock(T,center,partSize,matE,seed,strength,density)
+	local filled=0
+	local g=4
+	local wHalf=partSize.X/2
+	local dHalf=partSize.Z/2
+	local hBase=partSize.Y/2
+	for wx=-wHalf,wHalf,g do
+		for wz=-dHalf,dHalf,g do
+			local cellSeed=seed+hash2d(math.floor(wx),math.floor(wz))%500
+			local holeN=noise1(math.floor((wx+wz)*3.7)+cellSeed)
+			local isHole=holeN<0.16
+			local relief=naturalHeightOffset(wx,wz,cellSeed,strength,density)
+			local topY=relief
+			local baseY=-hBase*0.8
+			if not isHole then
+				for ty=baseY,topY,g do
+					local wxg=center.X+wx;local wzg=center.Z+wz;local wy=center.Y+ty
+					T:FillBlock(CFrame.new(wxg,wy,wzg),Vector3.new(g,g,g),matE)
+					filled=filled+1
+				end
+			else
+				T:FillBlock(CFrame.new(center.X+wx,center.Y-hBase*0.8,center.Z+wz),Vector3.new(g,g,g),matE)
+				filled=filled+1
+			end
+		end
+		task.wait()
+	end
+	return filled
 end
-local function applyTerrainForPart(part, matName)
-	local T=Workspace:FindFirstChild("Terrain"); if not T then return end
-	if not terrainOnlyMaterials[matName] then return end
-	local matE=materialEnum[matName]; if not matE then return end
+local function applyTerrainForPart(part,matName)
+	local T=Workspace:FindFirstChild("Terrain"); if not T then return 0 end
+	if not terrainOnlyMaterials[matName] then return 0 end
+	local matE=materialEnum[matName]; if not matE then return 0 end
+	local center=part.Position
+	local sz=part.Size
+	local wSize=math.clamp(sz.X,6,40)
+	local dSize=math.clamp(sz.Z,6,40)
+	local hSize=math.clamp(sz.Y,4,40)
+	local seed=makePartSeed(center.X,center.Y,center.Z)
+	local strength=4+(seed%3)
+	local density=3+(seed%2)
+	local filled=0
 	pcall(function()
-		local sz=part.Size
-		local shapeStr=part:IsA("WedgePart") and "Baji" or
-			(part.Shape==Enum.PartType.Ball and "Bola" or
-			(part.Shape==Enum.PartType.Cylinder and "Silinder" or "Balok"))
-		local accSize,accRadius=getAccurateSize(shapeStr,sz.X,sz.Y,sz.Z)
-		if part.Shape==Enum.PartType.Ball then T:FillBall(part.Position,accRadius,matE)
-		elseif part.Shape==Enum.PartType.Cylinder then T:FillCylinder(part.CFrame*CFrame.Angles(0,0,math.rad(90)),sz.Y,accRadius,matE)
-		else T:FillBlock(part.CFrame,accSize,matE) end
+		filled=bakeNaturalBlock(T,center,Vector3.new(wSize,hSize,dSize),matE,seed,strength,density)
 		applyMaterialColor(T,matName,matE)
 	end)
+	return filled
 end
 
--- ═══════════════════════════════════════════════
--- ⚡ V16 NATURAL: applyTerrainForPart (ganti yang lama)
--- ═══════════════════════════════════════════════
-local function applyTerrainForPart(part, matName)
-    local T = Workspace:FindFirstChild("Terrain"); if not T then return 0 end
-    if not terrainOnlyMaterials[matName] then return 0 end
-    local matE = materialEnum[matName]; if not matE then return 0 end
-    local center = part.Position
-    local sz = part.Size
-    local wSize = math.clamp(sz.X, 6, 40)
-    local dSize = math.clamp(sz.Z, 6, 40)
-    local hSize = math.clamp(sz.Y, 4, 40)
-    local seed = makePartSeed(center.X, center.Y, center.Z)
-    local strength = _TBnaturalSeed + (seed % 3)
-    local density  = _TBnaturalDensity + (seed % 2)
-    local filled = 0
-    pcall(function()
-        filled = bakeNaturalBlock(T, center, Vector3.new(wSize, hSize, dSize), matE, seed, strength, density)
-        applyMaterialColor(T, matName, matE)
-    end)
-    return filled
+local function applyTerrainDirectly(pos, size, shape, matName, rotDeg)
+	local T=Workspace:FindFirstChild("Terrain"); if not T then return nil end
+	if not terrainOnlyMaterials[matName] then return nil end
+	local matE=materialEnum[matName]; if not matE then return nil end
+	if not _TB.terrainDataByMaterial[matName] then _TB.terrainDataByMaterial[matName]={} end
+	local isColorable=colorableMaterials[matName] and true or false
+	local sR,sG,sB=0,0,0
+	if isColorable then sR,sG,sB=getActiveColorRGB(matName) end
+	local rot=rotDeg or 0
+	local vol=calcVolume(shape,size.X,size.Y,size.Z)
+	local entry={position=pos,size=size,shape=shape,material=matName,isColorable=isColorable,grR=sR,grG=sG,grB=sB,rotation=rot,volume=vol,_undone=false}
+	table.insert(_TB.terrainDataByMaterial[matName],entry)
+	pcall(function() doTerrainFill(T,pos,size,shape,matE,rot); applyMaterialColor(T,matName,matE) end)
+	return entry
 end
 
--- ═══════════════════════════════════════════════
--- ⚡ V16 NATURAL: convertPartsToTerrain (ganti yang lama)
--- ═══════════════════════════════════════════════
 local function convertPartsToTerrain()
-    local T = Workspace:FindFirstChild("Terrain"); if not T then return 0 end
-    local allParts = {}
-    for _, matName in ipairs(materials) do
-        if terrainOnlyMaterials[matName] then
-            local f = Workspace:FindFirstChild(matName)
-            if f then
-                for _, part in ipairs(f:GetChildren()) do
-                    if part:IsA("BasePart") then
-                        table.insert(allParts, { part = part, mat = matName })
-                    end
-                end
-            end
-        end
-    end
-    local c = 0
-    for i, item in ipairs(allParts) do
-        c = c + applyTerrainForPart(item.part, item.mat)
-        if i % 3 == 0 then task.wait() end -- anti freeze
-    end
-    return c
+	local T=Workspace:FindFirstChild("Terrain"); if not T then return 0 end
+	local c=0
+	for _,matName in ipairs(materials) do
+		if terrainOnlyMaterials[matName] then
+			local f=Workspace:FindFirstChild(matName)
+			if f then for _,part in ipairs(f:GetChildren()) do
+				if part:IsA("BasePart") then pcall(function() applyTerrainForPart(part,matName);c=c+1 end) end
+			end end
+		end
+	end
+	return c
 end
+
 -- ═══════════════════════════════════════════════════════════
 -- [A1] SEA LEVEL — isi Water di bawah Y target
 -- Data disimpan ke _TB.seaLevelData agar masuk konversi script
@@ -984,7 +959,9 @@ local function autoSaveDraft()
 	local chunks=generateScriptChunks()
 	if not chunks then return end
 	safeMakeFolder(DELTA_WORKSPACE);safeMakeFolder(HASIL_FOLDER)
-	safeWriteFile(AUTOSAVE_PATH,chunks[1].content)
+	local combined={}
+	for _,ch in ipairs(chunks) do table.insert(combined,ch.content) end
+	safeWriteFile(AUTOSAVE_PATH,table.concat(combined,"\n\n-- ===== PART =====\n\n"))
 end
 
 -- ═══════════════════════════════════════════════════════════
@@ -1742,7 +1719,7 @@ UI.autoTerrainBtn.MouseButton1Click:Connect(function()
 end)
 UI.brushTerrainOnlyBtn.MouseButton1Click:Connect(function()
 	if _TB.limitReached then UI.brushTerrainOnlyBtn.Text="LIMIT! Tekan CLEAR";UI.brushTerrainOnlyBtn.BackgroundColor3=Color3.fromRGB(175,45,45);task.wait(2);UI.brushTerrainOnlyBtn.Text="Tanpa Part: OFF";UI.brushTerrainOnlyBtn.BackgroundColor3=Color3.fromRGB(70,55,90);return end
-	_TB.brushTerrainOnly=not brushTerrainOnly;disableAllSpecialModes();updateSpecialBtns()
+	_TB.brushTerrainOnly=not _TB.brushTerrainOnly;disableAllSpecialModes();updateSpecialBtns()
 	if _TB.brushTerrainOnly then
 		UI.brushTerrainOnlyBtn.Text="Tanpa Part: ON ["..getTotalTerrainCount().."/"..TERRAIN_LIMIT.."]";UI.brushTerrainOnlyBtn.BackgroundColor3=Color3.fromRGB(95,80,145)
 		_TB.autoConvertToTerrain=false;UI.autoTerrainBtn.Text="Auto Terrain: OFF";UI.autoTerrainBtn.BackgroundColor3=Color3.fromRGB(70,55,90)
@@ -1751,7 +1728,13 @@ end)
 UI.treeBrushBtn.MouseButton1Click:Connect(function()
 	_TB.treeBrushReady=not _TB.treeBrushReady
 	if _TB.treeBrushReady then _TB.treeBrushActive=false;disableAllSpecialModes();updateSpecialBtns();UI.treeBrushBtn.Text="Brush Pohon: READY (off)";UI.treeBrushBtn.BackgroundColor3=Color3.fromRGB(75,125,55)
-		if not Workspace:FindFirstChild("POHON") then warn("⚠ Folder 'POHON' tidak ditemukan!") end
+		if not Workspace:FindFirstChild("POHON") then
+	local tf=Instance.new("Folder");tf.Name="POHON";tf.Parent=Workspace
+	local trunk=Instance.new("Part");trunk.Size=Vector3.new(1,4,1);trunk.Material=Enum.Material.Wood
+	trunk.Color=Color3.fromRGB(105,75,40);trunk.Anchored=true;trunk.Parent=tf
+	local crown=Instance.new("Part");crown.Shape=Enum.PartType.Ball;crown.Size=Vector3.new(4,4,4)
+	crown.Material=Enum.Material.LeafyGrass;crown.Color=Color3.fromRGB(70,140,70);crown.Anchored=true;crown.Parent=tf
+end
 	else _TB.treeBrushActive=false;UI.treeBrushBtn.Text="Brush Pohon: OFF";UI.treeBrushBtn.BackgroundColor3=Color3.fromRGB(40,70,45) end
 	updateQuickDisableBtn()
 end)
@@ -1770,7 +1753,7 @@ end)
 
 -- TAB REMOVE events
 UI.tunnelBtn.MouseButton1Click:Connect(function()
-	_TB.tunnelMode=not tunnelMode;UI.tunnelBtn.Text=_TB.tunnelMode and "Mode Gali: ON" or "Mode Gali: OFF"
+	_TB.tunnelMode=not _TB.tunnelMode;UI.tunnelBtn.Text=_TB.tunnelMode and "Mode Gali: ON" or "Mode Gali: OFF"
 	UI.tunnelBtn.BackgroundColor3=_TB.tunnelMode and Color3.fromRGB(145,145,195) or Color3.fromRGB(68,68,100)
 	if _TB.tunnelMode then _TB.placementEnabled=false;disableAllSpecialModes();updateSpecialBtns();updateQuickDisableBtn() end
 end)
@@ -1781,17 +1764,17 @@ UI.erodeBtn.MouseButton1Click:Connect(function()
 end)
 -- [A1] Sea Level events
 local function updateSlYDisplay() UI.slYDisplay.Text=tostring(_TB.seaLevelY) end
-UI.slYMinus.MouseButton1Click:Connect(function() _TB.seaLevelY=seaLevelY-4;updateSlYDisplay() end)
-UI.slYPlus.MouseButton1Click:Connect(function() _TB.seaLevelY=seaLevelY+4;updateSlYDisplay() end)
+UI.slYMinus.MouseButton1Click:Connect(function() _TB.seaLevelY=_TB.seaLevelY-4;updateSlYDisplay() end)
+UI.slYPlus.MouseButton1Click:Connect(function() _TB.seaLevelY=_TB.seaLevelY+4;updateSlYDisplay() end)
 UI.slSnap.MouseButton1Click:Connect(function()
 	if mouse and mouse.Hit then _TB.seaLevelY=math.floor(mouse.Hit.Position.Y);updateSlYDisplay();UI.slSnap.Text="✓";task.wait(1.5);UI.slSnap.Text="📍 Ambil Y" end
 end)
-UI.slRadiusMinus.MouseButton1Click:Connect(function() slRadiusVal=math.max(20,slRadiusVal-20);UI.slRadiusDisp.Text=tostring(slRadiusVal) end)
-UI.slRadiusPlus.MouseButton1Click:Connect(function() slRadiusVal=math.min(500,slRadiusVal+20);UI.slRadiusDisp.Text=tostring(slRadiusVal) end)
+UI.slRadiusMinus.MouseButton1Click:Connect(function() _TB.slRadius=math.max(20,(_TB.slRadius or 100)-20);UI.slRadiusDisp.Text=tostring(_TB.slRadius) end)
+UI.slRadiusPlus.MouseButton1Click:Connect(function() _TB.slRadius=math.min(500,(_TB.slRadius or 100)+20);UI.slRadiusDisp.Text=tostring(_TB.slRadius) end)
 UI.seaLevelBtn.MouseButton1Click:Connect(function()
 	UI.seaLevelBtn.Text="⏳ MENGISI AIR...";UI.seaLevelBtn.BackgroundColor3=Color3.fromRGB(0,60,130);task.wait(0.2)
 	task.spawn(function()
-		local ok=applySeaLevel(_TB.seaLevelY,_TB.currentMaterial,slRadiusVal)
+		local ok=applySeaLevel(_TB.seaLevelY,_TB.currentMaterial,_TB.slRadius or 100)
 		if ok then UI.seaLevelBtn.Text="✅ SEA LEVEL DONE!";UI.seaLevelBtn.BackgroundColor3=Color3.fromRGB(0,155,75)
 		else UI.seaLevelBtn.Text="⚠ Gagal";UI.seaLevelBtn.BackgroundColor3=Color3.fromRGB(175,35,35) end
 		task.wait(2);UI.seaLevelBtn.Text="🌊 APPLY SEA LEVEL";UI.seaLevelBtn.BackgroundColor3=Color3.fromRGB(0,80,160)
