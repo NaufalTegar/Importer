@@ -1161,8 +1161,8 @@ end
 -- Main glass workspace
 local Main=Instance.new("Frame",UI)
 Main.Name="MainFrame"
-Main.Size=UDim2.new(0,540,0,560)
-Main.Position=UDim2.new(0.5,-270,0.5,-280)
+Main.Size=UDim2.new(0,520,0,450)
+Main.Position=UDim2.new(0.5,-260,0.5,-225)
 Main.BackgroundColor3=Theme.bg
 Main.BorderSizePixel=0
 Main.ClipsDescendants=true
@@ -1299,6 +1299,30 @@ CloseClick.BackgroundTransparency=1
 CloseClick.Text=""
 addHover(CloseClick,CloseBtn,Color3.fromRGB(48,22,34),Color3.fromRGB(78,28,45))
 addHover(MinClick,MinBtn,Theme.panel3,Color3.fromRGB(31,39,58))
+
+-- Compact minimized state: a tiny crown launcher instead of a tall collapsed window.
+local MiniIcon = Instance.new("TextLabel", TitleBar)
+MiniIcon.Name = "MiniIcon"
+MiniIcon.Size = UDim2.new(1,0,1,0)
+MiniIcon.Position = UDim2.new(0,0,0,0)
+MiniIcon.BackgroundTransparency = 1
+MiniIcon.Text = "ðŸ‘‘"
+MiniIcon.TextColor3 = Theme.accentSoft
+MiniIcon.Font = Enum.Font.GothamBlack
+MiniIcon.TextSize = 25
+MiniIcon.TextXAlignment = Enum.TextXAlignment.Center
+MiniIcon.TextYAlignment = Enum.TextYAlignment.Center
+MiniIcon.Visible = false
+MiniIcon.ZIndex = 20
+
+local MiniRestoreClick = Instance.new("TextButton", TitleBar)
+MiniRestoreClick.Name = "MiniRestoreClick"
+MiniRestoreClick.Size = UDim2.new(1,0,1,0)
+MiniRestoreClick.Position = UDim2.new(0,0,0,0)
+MiniRestoreClick.BackgroundTransparency = 1
+MiniRestoreClick.Text = ""
+MiniRestoreClick.Visible = false
+MiniRestoreClick.ZIndex = 21
 
 -- Dragging
 do
@@ -1887,17 +1911,54 @@ CloseClick.MouseButton1Click:Connect(function()
 end)
 
 local minimized = false
-MinClick.MouseButton1Click:Connect(function()
-    minimized = not minimized
-    if minimized then
-        Content.Visible = false
-        StatsBar.Visible = false
-        Main.Size = UDim2.new(0, 540, 0, 72)
-    else
-        Content.Visible = true
-        StatsBar.Visible = true
-        Main.Size = UDim2.new(0, 540, 0, 560)
+local NORMAL_MAIN_SIZE = UDim2.new(0,520,0,450)
+local NORMAL_MAIN_POS = UDim2.new(0.5,-260,0.5,-225)
+local MINI_MAIN_SIZE = UDim2.new(0,64,0,64)
+
+local function setHeaderChildVisible(child, visible)
+    if child ~= MiniIcon and child ~= MiniRestoreClick then
+        child.Visible = visible
     end
+end
+
+local function setMinimized(state)
+    minimized = state
+
+    if minimized then
+        -- Keep only the crown visible. Everything else disappears.
+        Body.Visible = false
+        StatsBar.Visible = false
+        for _, child in ipairs(TitleBar:GetChildren()) do
+            setHeaderChildVisible(child, false)
+        end
+
+        TitleBar.Size = UDim2.new(1,0,1,0)
+        MiniIcon.Visible = true
+        MiniRestoreClick.Visible = true
+        Main.Size = MINI_MAIN_SIZE
+        Main.Position = UDim2.new(0,12,0,58)
+    else
+        MiniIcon.Visible = false
+        MiniRestoreClick.Visible = false
+        for _, child in ipairs(TitleBar:GetChildren()) do
+            if child ~= MiniIcon and child ~= MiniRestoreClick then
+                child.Visible = true
+            end
+        end
+
+        TitleBar.Size = UDim2.new(1,0,0,72)
+        Body.Visible = true
+        StatsBar.Visible = true
+        Main.Size = NORMAL_MAIN_SIZE
+        Main.Position = NORMAL_MAIN_POS
+    end
+end
+
+MinClick.MouseButton1Click:Connect(function()
+    setMinimized(true)
+end)
+MiniRestoreClick.MouseButton1Click:Connect(function()
+    setMinimized(false)
 end)
 
 
