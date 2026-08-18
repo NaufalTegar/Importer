@@ -179,9 +179,10 @@ end
 -- PART → TERRAIN NATURAL
 -- ═══════════════════════════════════════════════════════════
 local function hash2d(cx, cz)
-	local h = (cx * 374761393 + cz * 668265263)
-	h = (h ~ (h >> 13)) * 1274126177
-	h = h ~ (h >> 16)
+	local h = (cx * 374761393 + cz * 668265263) % 2147483647
+	h = bit32.bxor(h, bit32.rshift(h, 13)) * 1274126177
+	h = h % 2147483647
+	h = bit32.bxor(h, bit32.rshift(h, 16))
 	return math.abs(h % 100000)
 end
 local function seedFromPos(px, py, pz)
@@ -189,7 +190,8 @@ local function seedFromPos(px, py, pz)
 	return (base + math.floor(py*3.7)) % 100000
 end
 local function pseudoNoise(n)
-	n = (n << 13) ~ n
+	n = math.floor(n) % 2147483647
+	n = bit32.bxor(bit32.lshift(n, 13) % 2147483647, n)
 	n = (n * (n*n*15731 + 789221) + 1376312589)
 	return math.abs(math.sin(n))
 end
