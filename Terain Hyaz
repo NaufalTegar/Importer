@@ -1,0 +1,516 @@
+--!nonstrict
+--==============================================================
+-- 🌍 TERRAIN EDITOR PRO - Roblox Studio Lite
+-- Fitur: Material Selection, Auto Fill, Smooth, Eraser ON/OFF
+-- Dibuat dengan ❤️ untuk kamu
+--==============================================================
+
+local Players = game:GetService("Players")
+local Selection = game:GetService("Selection")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local UserInputService = game:GetService("UserInputService")
+local RunService = game:GetService("RunService")
+local TweenService = game:GetService("TweenService")
+local Terrain = workspace:WaitForChild("Terrain")
+
+local player = Players.LocalPlayer
+local playerGui = player:WaitForChild("PlayerGui")
+
+--==============================================================
+-- KONFIGURASI MATERIAL
+--==============================================================
+local MATERIALS = {
+	{ Name = "Grass", Color = Color3.fromRGB(76, 175, 80) },
+	{ Name = "Ground", Color = Color3.fromRGB(121, 85, 72) },
+	{ Name = "Sand", Color = Color3.fromRGB(255, 235, 59) },
+	{ Name = "Water", Color = Color3.fromRGB(33, 150, 243) },
+	{ Name = "Rock", Color = Color3.fromRGB(158, 158, 158) },
+	{ Name = "Snow", Color = Color3.fromRGB(255, 255, 255) },
+	{ Name = "Slate", Color = Color3.fromRGB(96, 125, 139) },
+	{ Name = "Concrete", Color = Color3.fromRGB(200, 200, 200) },
+	{ Name = "Brick", Color = Color3.fromRGB(244, 67, 54) },
+	{ Name = "WoodPlanks", Color = Color3.fromRGB(141, 110, 99) },
+	{ Name = "Cobblestone", Color = Color3.fromRGB(150, 150, 150) },
+	{ Name = "LeafyGrass", Color = Color3.fromRGB(56, 142, 60) },
+}
+
+local SELECTED_MATERIAL = "Grass"
+local ERASER_ENABLED = false
+local TOOL_MODE = "Paint" -- Paint / AutoFill / Smooth / Eraser
+
+--==============================================================
+-- GUI SETUP
+--==============================================================
+local screenGui = Instance.new("ScreenGui")
+screenGui.Name = "TerrainEditorProGUI"
+screenGui.ResetOnSpawn = false
+screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+screenGui.Parent = playerGui
+
+-- Panel utama
+local mainPanel = Instance.new("Frame")
+mainPanel.Size = UDim2.new(0, 320, 0, 500)
+mainPanel.Position = UDim2.new(0, 10, 0, 10)
+mainPanel.BackgroundColor3 = Color3.fromRGB(25, 25, 35)
+mainPanel.BorderSizePixel = 0
+mainPanel.Parent = screenGui
+
+local panelCorner = Instance.new("UICorner")
+panelCorner.CornerRadius = UDim.new(0, 12)
+panelCorner.Parent = mainPanel
+
+-- Panel draggable
+local dragFrame = Instance.new("Frame")
+dragFrame.Size = UDim2.new(1, 0, 0, 35)
+dragFrame.BackgroundColor3 = Color3.fromRGB(40, 40, 60)
+dragFrame.BorderSizePixel = 0
+dragFrame.Parent = mainPanel
+
+local dragCorner = Instance.new("UICorner")
+dragCorner.CornerRadius = UDim.new(0, 12)
+dragCorner.Parent = dragFrame
+
+local panelTitle = Instance.new("TextLabel")
+panelTitle.Size = UDim2.new(1, 0, 1, 0)
+panelTitle.BackgroundTransparency = 1
+panelTitle.Text = "🌍 Terrain Editor Pro"
+panelTitle.TextColor3 = Color3.fromRGB(255, 255, 255)
+panelTitle.TextSize = 18
+panelTitle.Font = Enum.Font.GothamBold
+panelTitle.Parent = dragFrame
+
+-- Close button
+local closeButton = Instance.new("TextButton")
+closeButton.Size = UDim2.new(0, 25, 0, 25)
+closeButton.Position = UDim2.new(1, -30, 0, 5)
+closeButton.BackgroundColor3 = Color3.fromRGB(200, 50, 50)
+closeButton.Text = "✕"
+closeButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+closeButton.TextSize = 14
+closeButton.Font = Enum.Font.GothamBold
+closeButton.Parent = dragFrame
+
+local closeCorner = Instance.new("UICorner")
+closeCorner.CornerRadius = UDim.new(0, 6)
+closeCorner.Parent = closeButton
+
+closeButton.MouseButton1Click:Connect(function()
+	screenGui:Destroy()
+end)
+
+-- Drag Panel
+local dragging = false
+local dragOffset = Vector2.new()
+dragFrame.InputBegan:Connect(function(input)
+	if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+		dragging = true
+		dragOffset = input.Position - Vector2.new(mainPanel.AbsolutePosition.X, mainPanel.AbsolutePosition.Y)
+	end
+end)
+
+UserInputService.InputChanged:Connect(function(input)
+	if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+		mainPanel.Position = UDim2.fromOffset(input.Position.X - dragOffset.X, input.Position.Y - dragOffset.Y)
+	end
+end)
+
+UserInputService.InputEnded:Connect(function(input)
+	if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+		dragging = false
+	end
+end)
+
+-- Status bar
+local statusFrame = Instance.new("Frame")
+statusFrame.Size = UDim2.new(1, -20, 0, 35)
+statusFrame.Position = UDim2.new(0, 10, 0, 45)
+statusFrame.BackgroundColor3 = Color3.fromRGB(20, 20, 30)
+statusFrame.BorderSizePixel = 0
+statusFrame.Parent = mainPanel
+
+local statusCorner = Instance.new("UICorner")
+statusCorner.CornerRadius = UDim.new(0, 8)
+statusCorner.Parent = statusFrame
+
+local statusLabel = Instance.new("TextLabel")
+statusLabel.Size = UDim2.new(1, -10, 1, 0)
+statusLabel.Position = UDim2.new(0, 5, 0, 0)
+statusLabel.BackgroundTransparency = 1
+statusLabel.Text = "✅ Pilih Part di Workspace"
+statusLabel.TextColor3 = Color3.fromRGB(100, 255, 100)
+statusLabel.TextSize = 13
+statusLabel.Font = Enum.Font.Gotham
+statusLabel.TextXAlignment = Enum.TextXAlignment.Left
+statusLabel.Parent = statusFrame
+
+-- Tool Mode Selection
+local toolLabel = Instance.new("TextLabel")
+toolLabel.Size = UDim2.new(1, -20, 0, 25)
+toolLabel.Position = UDim2.new(0, 10, 0, 88)
+toolLabel.BackgroundTransparency = 1
+toolLabel.Text = "🛠️ Pilih Mode:"
+toolLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
+toolLabel.TextSize = 14
+toolLabel.Font = Enum.Font.GothamBold
+toolLabel.TextXAlignment = Enum.TextXAlignment.Left
+toolLabel.Parent = mainPanel
+
+-- Tool buttons frame
+local toolFrame = Instance.new("Frame")
+toolFrame.Size = UDim2.new(1, -20, 0, 40)
+toolFrame.Position = UDim2.new(0, 10, 0, 115)
+toolFrame.BackgroundTransparency = 1
+toolFrame.Parent = mainPanel
+
+local tools = {
+	{ Name = "Paint", Icon = "🎨", Tip = "Lukis terrain manual" },
+	{ Name = "AutoFill", Icon = "🌀", Tip = "Isi otomatis area kosong" },
+	{ Name = "Smooth", Icon = "✨", Tip = "Haluskan permukaan" },
+	{ Name = "Eraser", Icon = "🧹", Tip = "Hapus terrain" },
+}
+
+local toolButtons = {}
+local buttonWidth = 68
+local spacing = 4
+
+for i, tool in ipairs(tools) do
+	local btn = Instance.new("TextButton")
+	btn.Name = tool.Name
+	btn.Size = UDim2.new(0, buttonWidth, 1, 0)
+	btn.Position = UDim2.new(0, (i-1) * (buttonWidth + spacing), 0, 0)
+	btn.BackgroundColor3 = Color3.fromRGB(60, 60, 80)
+	btn.TextColor3 = Color3.fromRGB(255, 255, 255)
+	btn.Text = tool.Icon .. "\n" .. tool.Name
+	btn.TextSize = 12
+	btn.Font = Enum.Font.GothamBold
+	btn.Parent = toolFrame
+
+	local btnCorner = Instance.new("UICorner")
+	btnCorner.CornerRadius = UDim.new(0, 6)
+	btnCorner.Parent = btn
+
+	btn.MouseEnter:Connect(function()
+		if TOOL_MODE ~= tool.Name then
+			TweenService:Create(btn, TweenInfo.new(0.1), { BackgroundColor3 = Color3.fromRGB(80, 80, 110) }):Play()
+		end
+	end)
+
+	btn.MouseLeave:Connect(function()
+		if TOOL_MODE ~= tool.Name then
+			TweenService:Create(btn, TweenInfo.new(0.1), { BackgroundColor3 = Color3.fromRGB(60, 60, 80) }):Play()
+		end
+	end)
+
+	btn.MouseButton1Click:Connect(function()
+		TOOL_MODE = tool.Name
+		for _, tb in pairs(toolButtons) do
+			TweenService:Create(tb, TweenInfo.new(0.2), { BackgroundColor3 = Color3.fromRGB(60, 60, 80) }):Play()
+		end
+		TweenService:Create(btn, TweenInfo.new(0.2), { BackgroundColor3 = Color3.fromRGB(0, 150, 255) }):Play()
+		statusLabel.Text = "🛠️ Mode: " .. tool.Name .. " - " .. tool.Tip
+	end)
+
+	toolButtons[tool.Name] = btn
+end
+
+-- Default select Paint
+toolButtons["Paint"].BackgroundColor3 = Color3.fromRGB(0, 150, 255)
+
+-- Material Selection Label
+local matLabel = Instance.new("TextLabel")
+matLabel.Size = UDim2.new(1, -20, 0, 25)
+matLabel.Position = UDim2.new(0, 10, 0, 165)
+matLabel.BackgroundTransparency = 1
+matLabel.Text = "🎨 Material: " .. SELECTED_MATERIAL
+matLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
+matLabel.TextSize = 14
+matLabel.Font = Enum.Font.GothamBold
+matLabel.TextXAlignment = Enum.TextXAlignment.Left
+matLabel.Parent = mainPanel
+
+-- Material Grid
+local matGrid = Instance.new("Frame")
+matGrid.Size = UDim2.new(1, -20, 0, 100)
+matGrid.Position = UDim2.new(0, 10, 0, 195)
+matGrid.BackgroundTransparency = 1
+matGrid.Parent = mainPanel
+
+local matButtons = {}
+local cols = 4
+local cellSize = 68
+local cellSpacing = 4
+
+for i, mat in ipairs(MATERIALS) do
+	local row = math.floor((i - 1) / cols)
+	local col = (i - 1) % cols
+
+	local btn = Instance.new("TextButton")
+	btn.Size = UDim2.new(0, cellSize, 0, 22)
+	btn.Position = UDim2.new(0, col * (cellSize + cellSpacing), 0, row * (22 + cellSpacing))
+	btn.BackgroundColor3 = mat.Color
+	btn.Text = mat.Name
+	btn.TextColor3 = Color3.fromRGB(0, 0, 0)
+	btn.TextSize = 10
+	btn.Font = Enum.Font.GothamBold
+	btn.Parent = matGrid
+
+	local btnCorner = Instance.new("UICorner")
+	btnCorner.CornerRadius = UDim.new(0, 4)
+	btnCorner.Parent = btn
+
+	btn.MouseButton1Click:Connect(function()
+		SELECTED_MATERIAL = mat.Name
+		matLabel.Text = "🎨 Material: " .. mat.Name
+		TOOL_MODE = "Paint"
+		
+		for _, mb in pairs(matButtons) do
+			mb.BorderSizePixel = 0
+		end
+		btn.BorderSizePixel = 3
+		btn.BorderColor3 = Color3.fromRGB(255, 255, 0)
+		statusLabel.Text = "🎨 Material dipilih: " .. mat.Name
+	end)
+
+	matButtons[mat.Name] = btn
+end
+
+-- Eraser Toggle
+local eraserFrame = Instance.new("Frame")
+eraserFrame.Size = UDim2.new(1, -20, 0, 40)
+eraserFrame.Position = UDim2.new(0, 10, 0, 305)
+eraserFrame.BackgroundTransparency = 1
+eraserFrame.Parent = mainPanel
+
+local eraserLabel = Instance.new("TextLabel")
+eraserLabel.Size = UDim2.new(0, 120, 1, 0)
+eraserLabel.BackgroundTransparency = 1
+eraserLabel.Text = "🧹 Eraser: OFF"
+eraserLabel.TextColor3 = Color3.fromRGB(255, 100, 100)
+eraserLabel.TextSize = 14
+eraserLabel.Font = Enum.Font.GothamBold
+eraserLabel.TextXAlignment = Enum.TextXAlignment.Left
+eraserLabel.Parent = eraserFrame
+
+local eraserToggle = Instance.new("TextButton")
+eraserToggle.Size = UDim2.new(0, 80, 0, 35)
+eraserToggle.Position = UDim2.new(0, 130, 0, 2)
+eraserToggle.BackgroundColor3 = Color3.fromRGB(200, 50, 50)
+eraserToggle.Text = "🔴 OFF"
+eraserToggle.TextColor3 = Color3.fromRGB(255, 255, 255)
+eraserToggle.TextSize = 14
+eraserToggle.Font = Enum.Font.GothamBold
+eraserToggle.Parent = eraserFrame
+
+local eraserToggleCorner = Instance.new("UICorner")
+eraserToggleCorner.CornerRadius = UDim.new(0, 6)
+eraserToggleCorner.Parent = eraserToggle
+
+eraserToggle.MouseButton1Click:Connect(function()
+	ERASER_ENABLED = not ERASER_ENABLED
+	if ERASER_ENABLED then
+		eraserToggle.BackgroundColor3 = Color3.fromRGB(0, 150, 0)
+		eraserToggle.Text = "🟢 ON"
+		eraserLabel.Text = "🧹 Eraser: ON"
+		eraserLabel.TextColor3 = Color3.fromRGB(100, 255, 100)
+		TOOL_MODE = "Eraser"
+	else
+		eraserToggle.BackgroundColor3 = Color3.fromRGB(200, 50, 50)
+		eraserToggle.Text = "🔴 OFF"
+		eraserLabel.Text = "🧹 Eraser: OFF"
+		eraserLabel.TextColor3 = Color3.fromRGB(255, 100, 100)
+	end
+	statusLabel.Text = "🧹 Eraser: " .. (ERASER_ENABLED and "ON - Sentuh untuk hapus" or "OFF - Aman dari sentuhan")
+end)
+
+-- Convert Button
+local convertButton = Instance.new("TextButton")
+convertButton.Size = UDim2.new(1, -20, 0, 45)
+convertButton.Position = UDim2.new(0, 10, 0, 355)
+convertButton.BackgroundColor3 = Color3.fromRGB(0, 120, 215)
+convertButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+convertButton.Text = "⚡ Convert Part → Terrain"
+convertButton.TextSize = 15
+convertButton.Font = Enum.Font.GothamBold
+convertButton.Parent = mainPanel
+
+local convertCorner = Instance.new("UICorner")
+convertCorner.CornerRadius = UDim.new(0, 8)
+convertCorner.Parent = convertButton
+
+-- Auto Fill Button
+local autofillButton = Instance.new("TextButton")
+autofillButton.Size = UDim2.new(1, -20, 0, 35)
+autofillButton.Position = UDim2.new(0, 10, 0, 410)
+autofillButton.BackgroundColor3 = Color3.fromRGB(100, 50, 150)
+autofillButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+autofillButton.Text = "🌀 Auto Fill Selected Area"
+autofillButton.TextSize = 13
+autofillButton.Font = Enum.Font.GothamBold
+autofillButton.Parent = mainPanel
+
+local autofillCorner = Instance.new("UICorner")
+autofillCorner.CornerRadius = UDim.new(0, 6)
+autofillCorner.Parent = autofillButton
+
+-- Smooth Button
+local smoothButton = Instance.new("TextButton")
+smoothButton.Size = UDim2.new(1, -20, 0, 35)
+smoothButton.Position = UDim2.new(0, 10, 0, 455)
+smoothButton.BackgroundColor3 = Color3.fromRGB(50, 150, 100)
+smoothButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+smoothButton.Text = "✨ Smooth Terrain"
+smoothButton.TextSize = 13
+smoothButton.Font = Enum.Font.GothamBold
+smoothButton.Parent = mainPanel
+
+local smoothCorner = Instance.new("UICorner")
+smoothCorner.CornerRadius = UDim.new(0, 6)
+smoothCorner.Parent = smoothButton
+
+--==============================================================
+-- FUNGSI TERRAIN
+--==============================================================
+
+local CELL_SIZE = 4 -- ukuran voxel terrain (4 stud)
+
+-- Konversi posisi world ke cell coordinate
+local function worldToCell(pos)
+	return Vector3.new(
+		math.floor(pos.X / CELL_SIZE),
+		math.floor(pos.Y / CELL_SIZE),
+		math.floor(pos.Z / CELL_SIZE)
+	)
+end
+
+-- Konversi cell coordinate ke posisi world
+local function cellToWorld(cell)
+	return Vector3.new(
+		cell.X * CELL_SIZE + CELL_SIZE / 2,
+		cell.Y * CELL_SIZE + CELL_SIZE / 2,
+		cell.Z * CELL_SIZE + CELL_SIZE / 2
+	)
+end
+
+-- Dapatkan part yang dipilih
+local function getSelectedParts()
+	local selected = Selection:Get()
+	local parts = {}
+	for _, obj in ipairs(selected) do
+		if obj:IsA("BasePart") then
+			table.insert(parts, obj)
+		end
+	end
+	return parts
+end
+
+-- Lukis terrain pada satu cell
+local function paintCell(cellPos, material)
+	local worldPos = cellToWorld(cellPos)
+
+	if TOOL_MODE == "Eraser" and ERASER_ENABLED then
+		-- Hapus terrain
+		local matHere = Terrain:GetMaterial(worldPos)
+		if matHere ~= Enum.Material.Air then
+			Terrain:SetMaterial(worldPos, Enum.Material.Air)
+			Terrain:SetCell(worldPos, Enum.CellMaterial.Empty, Enum.Material.Air)
+		end
+	else
+		-- Lukis terrain
+		local matEnum = Enum.Material[material] or Enum.Material.Grass
+		Terrain:SetMaterial(worldPos, matEnum)
+		Terrain:SetCell(worldPos, Enum.CellMaterial.Solid, matEnum)
+	end
+end
+
+-- Konversi Part ke Terrain
+local function convertPartsToTerrain(parts)
+	if #parts == 0 then
+		statusLabel.Text = "❌ Tidak ada part dipilih!"
+		task.wait(2)
+		statusLabel.Text = "✅ Pilih Part di Workspace"
+		return
+	end
+
+	statusLabel.Text = "⏳ Mengkonversi..."
+
+	local terrainData = {}
+
+	-- Kumpulkan semua cell yang akan di-paint
+	local cells = {}
+
+	for _, part in ipairs(parts) do
+		local cf = part.CFrame
+		local size = part.Size
+		local material = part.Material.Name
+
+		table.insert(terrainData, {
+			Position = cf.Position,
+			Size = size,
+			Material = material
+		})
+
+		-- Hitung bounding box dalam cell coordinates
+		local minWorld = cf.Position - size / 2
+		local maxWorld = cf.Position + size / 2
+
+		local minCell = worldToCell(minWorld)
+		local maxCell = worldToCell(maxWorld)
+
+		for x = minCell.X, maxCell.X do
+			for y = minCell.Y, maxCell.Y do
+				for z = minCell.Z, maxCell.Z do
+					local cellPos = Vector3.new(x, y, z)
+					cells[cellPos] = true
+				end
+			end
+		end
+
+		-- Tandai part agar bisa dihapus
+		part:SetAttribute("TerrainConverted", true)
+	end
+
+	-- Lukis semua cell
+	local count = 0
+	for cellPos in pairs(cells) do
+		paintCell(cellPos, SELECTED_MATERIAL)
+		count += 1
+	end
+
+	-- Buat server script yang akan membangun ulang terrain saat server start
+	local serverScript = Instance.new("Script")
+	serverScript.Name = "TerrainBuilder_Generated"
+	serverScript.Source = [[
+-- Generated by Terrain Editor Pro
+local Terrain = workspace:WaitForChild("Terrain")
+
+local function build()
+	-- Muat ulang dari tempat kita simpan (di ReplicatedStorage)
+	local data = script:FindFirstChild("TerrainData")
+	if data then
+		local terrainData = require(data)
+		for _, cell in ipairs(terrainData) do
+			Terrain:SetMaterial(cell.Position, cell.Material)
+			Terrain:SetCell(cell.Position, Enum.CellMaterial.Solid, cell.Material)
+		end
+		print("✅ Terrain dibangun ulang dari " .. #terrainData .. " cell")
+	end
+end
+
+build()
+]]
+
+	serverScript.Parent = ReplicatedStorage
+
+	-- Simpan data cell ke ModuleScript
+	local dataModule = Instance.new("ModuleScript")
+	dataModule.Name = "TerrainData"
+	dataModule.Source = "return " .. require(script.Parent:FindFirstChild("_TerrainBuilder").TerrainData) -- skip
+
+	-- Simpan data cell ke atribut
+	local serializedData = {}
+	for cellStr in pairs(cells) do
+		local cellPos = Vector3.new()
+		-- parse string dari key
+		local px, py, pz = string.match(cellStr, "(%d+) (%d+) (%d+)")
+		if px and py and pz then
+			table.insert(serializedData, {
