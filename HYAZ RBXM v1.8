@@ -49,20 +49,23 @@ _G.Hyaz_RAW_SOURCES = _G.Hyaz_RAW_SOURCES or {}
 
 -- Pemetaan Icon Vektor Lucide (High Resolution & Clean Vector Mask)
 local ICONS = {
-    PACKAGE        = "rbxassetid://10709791437",
-    SEARCH         = "rbxassetid://10709796118",
-    CLOSE          = "rbxassetid://10709790644",
-    MINIMIZE       = "rbxassetid://10709790387",
-    CHEVRON_RIGHT  = "rbxassetid://10709782525",
-    CHEVRON_LEFT   = "rbxassetid://10709782230",
-    BELL           = "rbxassetid://10709791160",
-    GAMEPAD        = "rbxassetid://10709790082",
-    FILE           = "rbxassetid://10709790948",
-    DOWNLOAD       = "rbxassetid://10709791283",
-    CHECK          = "rbxassetid://10709790240",
-    ALERT          = "rbxassetid://10709790520",
-    FOLDER         = "rbxassetid://10709790172",
-    REFRESH        = "rbxassetid://10709793382"
+    -- Roblox Creator Store icon assets (Lucide-style public icon set).
+    PACKAGE        = "rbxassetid://10734909540", -- package
+    SEARCH         = "rbxassetid://10734943674", -- folder-search
+    CLOSE          = "rbxassetid://10747384394", -- shield-close (fallback clean X-style asset)
+    MINIMIZE       = "rbxassetid://10709790948", -- chevron-down
+    CHEVRON_RIGHT  = "rbxassetid://10709791437",
+    CHEVRON_LEFT   = "rbxassetid://10709791281",
+    CHEVRON_DOWN   = "rbxassetid://10709790948",
+    CHEVRON_UP     = "rbxassetid://10709791523",
+    BELL           = "rbxassetid://10709775704",
+    GAMEPAD        = "rbxassetid://10723416527", -- cog-style utility icon fallback
+    FILE           = "rbxassetid://10734951038", -- sheet/file-like
+    DOWNLOAD       = "rbxassetid://10747366434", -- arrow-down
+    CHECK          = "rbxassetid://10709790644",
+    ALERT          = "rbxassetid://10709753149",
+    FOLDER         = "rbxassetid://10723387563",
+    REFRESH        = "rbxassetid://10734933222"
 }
 
 --                                                                        
@@ -1272,7 +1275,7 @@ local MinIcon=Instance.new("ImageLabel",MinBtn)
 MinIcon.Size=UDim2.new(0,14,0,14)
 MinIcon.Position=UDim2.new(0.5,-7,0.5,-7)
 MinIcon.BackgroundTransparency=1
-MinIcon.Image=ICONS.MINIMIZE
+MinIcon.Image=ICONS.CHEVRON_DOWN
 MinIcon.ImageColor3=Theme.accentSoft
 local MinClick=Instance.new("TextButton",MinBtn)
 MinClick.Size=UDim2.new(1,0,1,0)
@@ -1286,10 +1289,12 @@ CloseBtn.BackgroundColor3=Color3.fromRGB(48,22,34)
 CloseBtn.BorderSizePixel=0
 round(CloseBtn,9)
 stroke(CloseBtn,Theme.danger,1,0.2)
-local CloseIcon=Instance.new("TextLabel",CloseBtn)
-CloseIcon.Size=UDim2.new(1,0,1,0)
+local CloseIcon=Instance.new("ImageLabel",CloseBtn)
+CloseIcon.Size=UDim2.new(0,15,0,15)
+CloseIcon.Position=UDim2.new(0.5,-7.5,0.5,-7.5)
 CloseIcon.BackgroundTransparency=1
-CloseIcon.Text="Ã—"
+CloseIcon.Image=ICONS.CLOSE
+CloseIcon.ImageColor3=Color3.fromRGB(255,142,166)
 CloseIcon.TextColor3=Color3.fromRGB(255,142,166)
 CloseIcon.Font=Enum.Font.GothamBold
 CloseIcon.TextSize=18
@@ -1300,35 +1305,78 @@ CloseClick.Text=""
 addHover(CloseClick,CloseBtn,Color3.fromRGB(48,22,34),Color3.fromRGB(78,28,45))
 addHover(MinClick,MinBtn,Theme.panel3,Color3.fromRGB(31,39,58))
 
--- Compact minimized state: a tiny crown launcher instead of a tall collapsed window.
-local MiniIcon = Instance.new("TextLabel", TitleBar)
+-- Minimized state: a thin horizontal draggable bar.
+-- No HYAZ NEXUS text remains visible while minimized.
+local MiniIcon = Instance.new("Frame", TitleBar)
 MiniIcon.Name = "MiniIcon"
-MiniIcon.Size = UDim2.new(1,0,1,0)
+MiniIcon.Size = UDim2.new(1,-44,1,0)
 MiniIcon.Position = UDim2.new(0,0,0,0)
-MiniIcon.BackgroundTransparency = 1
-MiniIcon.Text = "ðŸ‘‘"
-MiniIcon.TextColor3 = Theme.accentSoft
-MiniIcon.Font = Enum.Font.GothamBlack
-MiniIcon.TextSize = 25
-MiniIcon.TextXAlignment = Enum.TextXAlignment.Center
-MiniIcon.TextYAlignment = Enum.TextYAlignment.Center
+MiniIcon.BackgroundColor3 = Theme.panel
+MiniIcon.BackgroundTransparency = 0
+MiniIcon.BorderSizePixel = 0
 MiniIcon.Visible = false
 MiniIcon.ZIndex = 20
 
+local MiniLine = Instance.new("Frame", MiniIcon)
+MiniLine.Size = UDim2.new(1,-30,0,2)
+MiniLine.Position = UDim2.new(0,11,0.5,-1)
+MiniLine.BackgroundColor3 = Theme.accent
+MiniLine.BackgroundTransparency = 0.35
+MiniLine.BorderSizePixel = 0
+MiniLine.ZIndex = 21
+round(MiniLine,1)
+
 local MiniRestoreClick = Instance.new("TextButton", TitleBar)
 MiniRestoreClick.Name = "MiniRestoreClick"
-MiniRestoreClick.Size = UDim2.new(1,0,1,0)
-MiniRestoreClick.Position = UDim2.new(0,0,0,0)
-MiniRestoreClick.BackgroundTransparency = 1
+MiniRestoreClick.Size = UDim2.new(0,40,1,0)
+MiniRestoreClick.Position = UDim2.new(1,-40,0,0)
+MiniRestoreClick.BackgroundColor3 = Theme.panel3
+MiniRestoreClick.BorderSizePixel = 0
 MiniRestoreClick.Text = ""
 MiniRestoreClick.Visible = false
-MiniRestoreClick.ZIndex = 21
+MiniRestoreClick.ZIndex = 22
 
--- Dragging
+local MiniDivider = Instance.new("Frame", TitleBar)
+MiniDivider.Name = "MiniDivider"
+MiniDivider.Size = UDim2.new(0,1,1,-10)
+MiniDivider.Position = UDim2.new(1,-41,0,5)
+MiniDivider.BackgroundColor3 = Theme.border
+MiniDivider.BackgroundTransparency = 0.2
+MiniDivider.BorderSizePixel = 0
+MiniDivider.Visible = false
+MiniDivider.ZIndex = 22
+
+local MiniRestoreIcon = Instance.new("ImageLabel", MiniRestoreClick)
+MiniRestoreIcon.Size = UDim2.new(0,18,0,18)
+MiniRestoreIcon.Position = UDim2.new(0.5,-9,0.5,-9)
+MiniRestoreIcon.BackgroundTransparency = 1
+MiniRestoreIcon.Image = ICONS.CHEVRON_DOWN
+MiniRestoreIcon.ImageColor3 = Theme.accentSoft
+MiniRestoreIcon.ZIndex = 23
+
+-- Minimized state is declared before the drag closure so the drag logic can
+-- correctly switch between normal-window and mini-bar behavior.
+local minimized = false
+
+-- Normal window dragging. In minimized mode, only the thin bar itself is draggable.
 do
     local drag,ds,sp
+    local function beginDrag(input)
+        if input.UserInputType==Enum.UserInputType.MouseButton1 or input.UserInputType==Enum.UserInputType.Touch then
+            drag=true; ds=input.Position; sp=Main.Position
+        end
+    end
     TitleBar.InputBegan:Connect(function(input)
-        if input.UserInputType==Enum.UserInputType.MouseButton1 or input.UserInputType==Enum.UserInputType.Touch then drag=true;ds=input.Position;sp=Main.Position end
+        if minimized then
+            if input.UserInputType==Enum.UserInputType.MouseButton1 or input.UserInputType==Enum.UserInputType.Touch then
+                -- Restore button handles its own click; the rest of the bar is draggable.
+                local x = input.Position.X
+                local barRight = TitleBar.AbsolutePosition.X + TitleBar.AbsoluteSize.X
+                if x < barRight - 40 then beginDrag(input) end
+            end
+        else
+            beginDrag(input)
+        end
     end)
     UserInputService.InputChanged:Connect(function(input)
         if drag and (input.UserInputType==Enum.UserInputType.MouseMovement or input.UserInputType==Enum.UserInputType.Touch) then
@@ -1910,13 +1958,12 @@ CloseClick.MouseButton1Click:Connect(function()
     end
 end)
 
-local minimized = false
 local NORMAL_MAIN_SIZE = UDim2.new(0,520,0,450)
 local NORMAL_MAIN_POS = UDim2.new(0.5,-260,0.5,-225)
-local MINI_MAIN_SIZE = UDim2.new(0,64,0,64)
+local MINI_MAIN_SIZE = UDim2.new(0,230,0,38)
 
 local function setHeaderChildVisible(child, visible)
-    if child ~= MiniIcon and child ~= MiniRestoreClick then
+    if child ~= MiniIcon and child ~= MiniRestoreClick and child ~= MiniDivider then
         child.Visible = visible
     end
 end
@@ -1925,7 +1972,7 @@ local function setMinimized(state)
     minimized = state
 
     if minimized then
-        -- Keep only the crown visible. Everything else disappears.
+        -- Clear the entire header/body/footer and leave only a thin draggable bar.
         Body.Visible = false
         StatsBar.Visible = false
         for _, child in ipairs(TitleBar:GetChildren()) do
@@ -1935,13 +1982,15 @@ local function setMinimized(state)
         TitleBar.Size = UDim2.new(1,0,1,0)
         MiniIcon.Visible = true
         MiniRestoreClick.Visible = true
+        MiniDivider.Visible = true
         Main.Size = MINI_MAIN_SIZE
         Main.Position = UDim2.new(0,12,0,58)
     else
         MiniIcon.Visible = false
         MiniRestoreClick.Visible = false
+        MiniDivider.Visible = false
         for _, child in ipairs(TitleBar:GetChildren()) do
-            if child ~= MiniIcon and child ~= MiniRestoreClick then
+            if child ~= MiniIcon and child ~= MiniRestoreClick and child ~= MiniDivider then
                 child.Visible = true
             end
         end
