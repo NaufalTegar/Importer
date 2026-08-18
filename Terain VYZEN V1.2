@@ -189,53 +189,83 @@ local function seedFromPos(px, py, pz)
 	local base = hash2d(math.floor(px/4), math.floor(pz/4))
 	return (base + math.floor(py*3.7)) % 100000
 end
-local function pseudoNoise(n)
-	n = math.floor(n) % 2147483647
-	n = bit32.bxor(bit32.lshift(n, 13) % 2147483647, n)
-	n = (n * (n*n*15731 + 789221) + 1376312589)
-	return math.abs(math.sin(n))
+-- ═══ NOISE HALUS (padang rumput bergelombang, tidak spiky) ═══
+local function pseudoRandom(seedNum)
+	local x = math.sin(seedNum * 12.9898) * 43758.5453
+	return x - math.floor(x)
 end
-local function reliefAt(cx, cz, seed, strength, density)
-	local s, amp, h = density, strength*2, 0
-	for oct = 0, 2 do
-		local f = s + oct
-		local nx = (cx/f) + seed % 97
-		local nz = (cz/f) + seed % 89
-		h = h + math.sin(nx*2.3 + seed%13) * math.sin(nz*1.7 + seed%7) * (amp/(oct+1))
+
+-- Relief halus: frekuensi rendah (gelombang lebar), amplitudo kecil
+local function reliefAt(x, z, seed, amplitude, wavelength)
+	local nx = x / wavelength
+	local nz = z / wavelength
+	local h = math.sin(nx + seed*0.13) * math.cos(nz*0.8 + seed*0.07)
+	h = h + math.sin(nx*0.5 + nz*0.3 + seed*0.21) * 0.5
+	return h * amplitude
+end
+
+-- Bake terrain mengikuti ukuran & rotasi Part asli, dengan smoothing
+local function bakeNaturalTerrain(T, part, matE, seed, amplitude, wavelength)
+	local g = 4 -- resolusi grid
+	local sizeX, sizeZ = part.Size.X, part.Size.Z
+	local halfX, halfZ = sizeX/2, sizeZ/2
+	local baseThickness = 3 -- tebal dasar terrain padat di bawah gelombang
+
+	-- Precompute grid tinggi lokal
+	local cols = math.ceil(sizeX/g) + 1
+	local rows = math.ceil(sizeZ/g) + 1
+	local heightGrid = {}
+	for ix = 0, cols do
+		heightGrid[ix] = {}
+		local lx = -halfX + ix*g
+		for iz = 0, rows do
+			local lz = -halfZ + iz*g
+			heightGrid[ix][iz] = reliefAt(lx, lz, seed, amplitude, wavelength)
+		end
 	end
-	h = h + (pseudoNoise(cx*13+seed) - 0.5) * (amp*0.4)
-	return h
-end
-local function bakeNaturalTerrain(T, center, size, matE, seed, strength, density)
-	local g = 4
-	local wHalf, dHalf, hBase = size.X/2, size.Z/2, size.Y/2
-	for wx = -wHalf, wHalf, g do
-		for wz = -dHalf, dHalf, g do
-			local cellSeed = seed + hash2d(math.floor(wx), math.floor(wz)) % 500
-			local isHole = pseudoNoise(math.floor((wx+wz)*3.7) + cellSeed) < 0.15
-			local topY = reliefAt(wx, wz, cellSeed, strength, density)
-			local baseY = -hBase * 0.8
-			if not isHole then
-				for ty = baseY, topY, g do
-					T:FillBlock(CFrame.new(center.X+wx, center.Y+ty, center.Z+wz), Vector3.new(g,g,g), matE)
+
+	-- Smoothing pass (box blur ringan) supaya transisi antar titik halus
+	local smoothGrid = {}
+	for ix = 0, cols do
+		smoothGrid[ix] = {}
+		for iz = 0, rows do
+			local sum, count = 0, 0
+			for dx = -1, 1 do
+				for dz = -1, 1 do
+					local nxk, nzk = ix+dx, iz+dz
+					if heightGrid[nxk] and heightGrid[nxk][nzk] then
+						sum = sum + heightGrid[nxk][nzk]
+						count = count + 1
+					end
 				end
 			end
+			smoothGrid[ix][iz] = sum/count
+		end
+	end
+
+	-- Fill terrain sesuai orientasi Part (pakai CFrame part supaya ikut rotasi)
+	for ix = 0, cols-1 do
+		local lx = -halfX + ix*g
+		for iz = 0, rows-1 do
+			local lz = -halfZ + iz*g
+			local topH = smoothGrid[ix][iz]
+			local worldPos = part.CFrame:PointToWorldSpace(Vector3.new(lx, topH, lz))
+			local basePos = part.CFrame:PointToWorldSpace(Vector3.new(lx, topH - baseThickness, lz))
+			-- isi dari dasar sampai puncak gelombang, blok kecil menempel grid
+			local fillCF = CFrame.new((worldPos + basePos)/2) * (part.CFrame - part.CFrame.Position)
+			T:FillBlock(fillCF, Vector3.new(g, baseThickness + math.abs(topH)+2, g), matE)
 		end
 		task.wait()
 	end
 end
+
 local function applyTerrainForPart(part, matName)
 	local T = getTerrain(); if not T then return 0 end
 	local matE = MAT_ENUM[matName]; if not matE then return 0 end
-	local center = part.Position
-	local sz = part.Size
-	local wSize = math.clamp(sz.X, 6, 40)
-	local dSize = math.clamp(sz.Z, 6, 40)
-	local hSize = math.clamp(sz.Y, 4, 40)
-	local seed = seedFromPos(center.X, center.Y, center.Z) + math.random(0, 999)
-	local strength = 4 + (seed % 3)
-	local density  = 3 + (seed % 2)
-	local ok = pcall(bakeNaturalTerrain, T, center, Vector3.new(wSize,hSize,dSize), matE, seed, strength, density)
+	local seed = math.floor(part.Position.X*3 + part.Position.Y*7 + part.Position.Z*11) % 100000
+	local amplitude = math.clamp(part.Size.Y * 0.15, 1, 4) -- gelombang kecil, max ±4 studs
+	local wavelength = math.clamp(math.max(part.Size.X, part.Size.Z) / 3, 8, 30) -- gelombang lebar & landai
+	local ok = pcall(bakeNaturalTerrain, T, part, matE, seed, amplitude, wavelength)
 	return ok and 1 or 0
 end
 local function convertPartsToTerrain()
