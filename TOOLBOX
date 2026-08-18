@@ -2,16 +2,14 @@
 -- Standalone prototype:
 -- 1) Search free Creator Store models without an Open Cloud API key.
 -- 2) Keep each returned AssetId.
--- 3) Insert the selected model by Asset ID.
+-- 3) Insert the selected model by Asset ID using InsertService:LoadAsset().
 --
--- Roblox's documented InsertService:GetFreeModelsAsync() searches free models.
--- AssetService:LoadAssetAsync() is used for loading public third-party assets.
--- The experience must allow third-party/free asset loading where Roblox requires it.
+-- Search remains independent of an Open Cloud API key.
+-- INSERT is intentionally tested with InsertService:LoadAsset(assetId).
 
 local Players = game:GetService("Players")
 local UserInputService = game:GetService("UserInputService")
 local InsertService = game:GetService("InsertService")
-local AssetService = game:GetService("AssetService")
 local CoreGui = game:GetService("CoreGui")
 
 local LocalPlayer = Players.LocalPlayer
@@ -227,26 +225,45 @@ local function createResult(item, index)
         setStatus("Loading asset " .. tostring(assetId) .. "...", Theme.accent)
 
         task.spawn(function()
+            -- DIRECT INSERT TEST:
+            -- Use InsertService:LoadAsset(assetId) exactly as requested.
             local ok, result = pcall(function()
-                return AssetService:LoadAssetAsync(assetId)
+                return InsertService:LoadAsset(assetId)
             end)
 
-            if not ok or not result then
-                -- Fallback for environments where LoadAssetAsync is unavailable.
-                ok, result = pcall(function()
-                    return InsertService:LoadAsset(assetId)
-                end)
-            end
-
             if ok and result then
-                result.Parent = workspace
-                setStatus("Inserted: " .. tostring(item.Name or assetId), Theme.success)
-                Insert.Text = "INSERTED"
-                Insert.BackgroundColor3 = Color3.fromRGB(32, 105, 77)
+                local parentOk, parentError = pcall(function()
+                    result.Parent = workspace
+                end)
+
+                if parentOk then
+                    setStatus(
+                        "Inserted: " .. tostring(item.Name or assetId) ..
+                        " • ID " .. tostring(assetId),
+                        Theme.success
+                    )
+                    Insert.Text = "INSERTED"
+                    Insert.BackgroundColor3 = Color3.fromRGB(32, 105, 77)
+                else
+                    pcall(function()
+                        result:Destroy()
+                    end)
+                    setStatus(
+                        "Loaded, but Workspace insert failed: " .. tostring(parentError),
+                        Theme.danger
+                    )
+                    Insert.Text = "RETRY"
+                    Insert.Active = true
+                end
             else
-                setStatus("Insert failed for Asset ID " .. tostring(assetId), Theme.danger)
+                setStatus(
+                    "Insert failed • ID " .. tostring(assetId) ..
+                    " • " .. tostring(result),
+                    Theme.danger
+                )
                 Insert.Text = "RETRY"
                 Insert.Active = true
+                warn("[HYAZ TOOLBOX] InsertService:LoadAsset failed:", result)
             end
         end)
     end)
