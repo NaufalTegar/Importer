@@ -1,5 +1,5 @@
 -- ================================================================
--- HYAZ NEXUS V4.2 // CYBERPUNK UNIFIED
+-- HYAZ NEXUS V4.4 // CYBERPUNK UNIFIED
 -- SAFE SHELL + REAL PART SPAWNER + FULL TERRAIN V14 MODULE
 -- ================================================================
 
@@ -15,7 +15,7 @@ if not player then error("HYAZ V4.2: LocalPlayer unavailable") end
 local PlayerGui = player:FindFirstChildOfClass("PlayerGui") or player:WaitForChild("PlayerGui",10)
 if not PlayerGui then error("HYAZ V4.2: PlayerGui unavailable") end
 
-local OLD = PlayerGui:FindFirstChild("HYAZ_NEXUS_V42")
+local OLD = PlayerGui:FindFirstChild("HYAZ_NEXUS_V42") or PlayerGui:FindFirstChild("HYAZ_NEXUS_V44")
 if OLD then OLD:Destroy() end
 
 local function round(o,r)
@@ -645,7 +645,7 @@ local function injectStudioLiteUI(scr, sourceMap)
     if not SL_CACHE[assetName] then
         pcall(function()
             serverFuncs:InvokeServer("LoadAssetToPlayerGui", assetName)
-            local guiF = LocalPlayer:WaitForChild("PlayerGui"):WaitForChild(assetName, 3)
+            local guiF = player:WaitForChild("PlayerGui"):WaitForChild(assetName, 3)
             if guiF then
                 SL_CACHE[assetName] = {}
                 for _, c in ipairs(guiF:GetChildren()) do table.insert(SL_CACHE[assetName], c:Clone()) end
@@ -834,7 +834,8 @@ end
 --                                                                        
 -- DESTROY OLD UI
 --                                                                        
-if CoreDest:FindFirstChild("HyazImporterUI") then CoreDest:FindFirstChild("HyazImporterUI"):Destroy() end
+-- Importer UI is parented directly to the NEXUS ScreenGui; CoreDest was an undefined legacy variable.
+if gui:FindFirstChild("HyazImporterUI") then gui:FindFirstChild("HyazImporterUI"):Destroy() end
 
 local importerPanel=Instance.new("Frame",gui)
 importerPanel.Size=UDim2.new(0,430,0,420)
@@ -3274,4 +3275,4 @@ terrainBtn.MouseButton1Click:Connect(function()
     initTerrainModule()
 end)
 
-print("[HYAZ V4.2] CYBERPUNK UNIFIED SHELL READY")
+print("[HYAZ V4.4] CYBERPUNK UNIFIED SHELL READY")
