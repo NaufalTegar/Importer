@@ -725,6 +725,22 @@ local function registerGradientAnimation(gradient, speed, mode)
 end
 
 --                                                                        
+-- BOOT UI HELPERS
+-- These helpers must exist before the loading screen is constructed.
+local function round(obj, radius)
+    local c = Instance.new("UICorner", obj)
+    c.CornerRadius = UDim.new(0, radius or 8)
+    return c
+end
+
+local function stroke(obj, color, thickness, transparency)
+    local s = Instance.new("UIStroke", obj)
+    s.Color = color or Color3.fromRGB(45,61,86)
+    s.Thickness = thickness or 1
+    s.Transparency = transparency == nil and 0 or transparency
+    return s
+end
+
 -- LOADING SCREEN // HYAZ NEXUS BOOT
 -- New visual direction: futuristic glass / orbital HUD, no Matrix rain or glitch-reveal.
 local LoadingScreen = Instance.new("Frame", UI)
@@ -774,7 +790,13 @@ for i = 1, 7 do
     s.Color = (i % 2 == 0) and Color3.fromRGB(165,90,255) or Color3.fromRGB(60,205,255)
     s.Transparency = 0.70 + i*0.025
     ring.Rotation = i * 11
-    registerGradientAnimation(Instance.new("UIGradient", ring), 0, "rotate")
+    local RingGradient = Instance.new("UIGradient", ring)
+    RingGradient.Color = ColorSequence.new({
+        ColorSequenceKeypoint.new(0, Color3.fromRGB(60,205,255)),
+        ColorSequenceKeypoint.new(0.5, Color3.fromRGB(165,90,255)),
+        ColorSequenceKeypoint.new(1, Color3.fromRGB(60,205,255))
+    })
+    registerGradientAnimation(RingGradient, 18 + i * 3, "rotate")
 end
 
 -- Decorative grid
@@ -869,6 +891,7 @@ ProgressGlow.Color = ColorSequence.new({
     ColorSequenceKeypoint.new(1,Color3.fromRGB(78,236,209))
 })
 ProgressGlow.Rotation = 0
+registerGradientAnimation(ProgressGlow, 45, "shift")
 
 local Stage = Instance.new("TextLabel", Core)
 Stage.Size = UDim2.new(1,-44,0,20)
@@ -907,57 +930,131 @@ BootLog.ZIndex = 1004
 local loadingActive = true
 local RevealFinished = false
 
+-- Loading animation state
 task.spawn(function()
     local stages = {
-        {"MOUNTING UI CORE", 0.20},
-        {"MAPPING ASSET CHANNELS", 0.43},
-        {"CALIBRATING SCANNER", 0.67},
-        {"SYNCING WORKSPACE", 0.84},
+        {"MOUNTING UI CORE", 0.18},
+        {"MAPPING ASSET CHANNELS", 0.38},
+        {"CALIBRATING SCANNER", 0.60},
+        {"SYNCING WORKSPACE", 0.80},
+        {"FINALIZING NEXUS", 0.94},
         {"NEXUS READY", 1.00},
     }
+
     for _, data in ipairs(stages) do
-        if not loadingActive then break end
+        if not loadingActive or not LoadingScreen.Parent then
+            return
+        end
+
         Stage.Text = data[1]
         local target = data[2]
-        for i = 1, 12 do
-            local current = Progress.Size.X.Scale
-            local nextValue = current + (target-current)*0.35
-            Progress.Size = UDim2.new(nextValue,0,1,0)
-            Percent.Text = string.format("%02d%%", math.floor(nextValue*100))
-            task.wait(0.035)
+        local startValue = Progress.Size.X.Scale
+        local duration = 0.28
+
+        for step = 1, 14 do
+            if not loadingActive or not LoadingScreen.Parent then
+                return
+            end
+
+            local alpha = step / 14
+            -- SmoothStep easing
+            local eased = alpha * alpha * (3 - 2 * alpha)
+            local value = startValue + (target - startValue) * eased
+
+            Progress.Size = UDim2.new(value, 0, 1, 0)
+            Percent.Text = string.format("%02d%%", math.floor(value * 100 + 0.5))
+            task.wait(duration / 14)
         end
-        Progress.Size = UDim2.new(target,0,1,0)
-        Percent.Text = string.format("%02d%%", math.floor(target*100))
-        task.wait(0.10)
+
+        Progress.Size = UDim2.new(target, 0, 1, 0)
+        Percent.Text = string.format("%02d%%", math.floor(target * 100 + 0.5))
+        task.wait(0.08)
     end
+
     RevealFinished = true
 end)
 
+-- Subtle title pulse while loading.
 task.spawn(function()
-    while loadingActive do
-        local pulse = (math.sin(os.clock()*3)+1)/2
-        CoreTitle.TextTransparency = pulse*0.08
-        task.wait(0.04)
+    while loadingActive and LoadingScreen.Parent do
+        local pulse = (math.sin(os.clock() * 3.2) + 1) * 0.5
+        CoreTitle.TextTransparency = pulse * 0.12
+        task.wait(0.03)
     end
 end)
 
+-- Animated status dots.
 task.spawn(function()
-    while not RevealFinished do task.wait(0.05) end
-    task.wait(0.35)
-    loadingActive = false
-    for i = 1, 18 do
-        local alpha = i/18
-        LoadingScreen.BackgroundTransparency = alpha
-        for _, obj in ipairs(LoadingScreen:GetDescendants()) do
-            if obj:IsA("TextLabel") then
-                obj.TextTransparency = alpha
-            elseif obj:IsA("Frame") and obj ~= LoadingScreen then
-                obj.BackgroundTransparency = math.min(1, (obj.BackgroundTransparency or 0) + alpha*0.055)
-            end
-        end
-        task.wait(0.025)
+    local base = "BOOTING NEXUS"
+    while loadingActive and LoadingScreen.Parent do
+        local phase = math.floor(os.clock() * 3) % 4
+        Stage.Text = base .. string.rep(".", phase)
+        task.wait(0.20)
     end
-    if LoadingScreen and LoadingScreen.Parent then LoadingScreen:Destroy() end
+end)
+
+-- Guaranteed automatic close.
+task.spawn(function()
+    -- Normal boot animation completes first.
+    local deadline = os.clock() + 3.2
+
+    while loadingActive and LoadingScreen.Parent and not RevealFinished do
+        if os.clock() >= deadline then
+            break
+        end
+        task.wait(0.05)
+    end
+
+    if not LoadingScreen or not LoadingScreen.Parent then
+        loadingActive = false
+        return
+    end
+
+    loadingActive = false
+
+    -- Ensure the progress reaches 100% before the fade.
+    Progress.Size = UDim2.new(1, 0, 1, 0)
+    Percent.Text = "100%"
+    Stage.Text = "NEXUS READY"
+
+    task.wait(0.18)
+
+    -- Smooth fade for every visible element.
+    local fadeInfo = TweenInfo.new(0.42, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+
+    pcall(function()
+        TweenService:Create(LoadingScreen, fadeInfo, {
+            BackgroundTransparency = 1
+        }):Play()
+    end)
+
+    for _, obj in ipairs(LoadingScreen:GetDescendants()) do
+        pcall(function()
+            if obj:IsA("TextLabel") or obj:IsA("TextButton") then
+                TweenService:Create(obj, fadeInfo, {
+                    TextTransparency = 1
+                }):Play()
+            elseif obj:IsA("ImageLabel") or obj:IsA("ImageButton") then
+                TweenService:Create(obj, fadeInfo, {
+                    ImageTransparency = 1
+                }):Play()
+            elseif obj:IsA("Frame") then
+                TweenService:Create(obj, fadeInfo, {
+                    BackgroundTransparency = 1
+                }):Play()
+            elseif obj:IsA("UIStroke") then
+                TweenService:Create(obj, fadeInfo, {
+                    Transparency = 1
+                }):Play()
+            end
+        end)
+    end
+
+    task.wait(0.48)
+
+    if LoadingScreen and LoadingScreen.Parent then
+        LoadingScreen:Destroy()
+    end
 end)
 
 -- RenderStepped Animation Engine (60 FPS Smooth Movement)
@@ -995,20 +1092,6 @@ local Theme = {
     success = Color3.fromRGB(83,232,205),
     danger = Color3.fromRGB(255,91,124),
 }
-
-local function round(obj, radius)
-    local c = Instance.new("UICorner", obj)
-    c.CornerRadius = UDim.new(0, radius or 8)
-    return c
-end
-
-local function stroke(obj, color, thickness, transparency)
-    local s = Instance.new("UIStroke", obj)
-    s.Color = color or Theme.border
-    s.Thickness = thickness or 1
-    s.Transparency = transparency == nil and 0 or transparency
-    return s
-end
 
 local function padding(obj, top, right, bottom, left)
     local p = Instance.new("UIPadding", obj)
