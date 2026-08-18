@@ -6,6 +6,7 @@
 --
 -- Search remains independent of an Open Cloud API key.
 -- INSERT is intentionally tested with InsertService:LoadAsset(assetId).
+-- V2 adds detailed diagnostics so the exact Roblox failure is visible.
 
 local Players = game:GetService("Players")
 local UserInputService = game:GetService("UserInputService")
@@ -137,11 +138,13 @@ corner(Search, 9)
 
 local Status = label(Main, "Ready — no API key required", 11, Theme.muted, Enum.Font.GothamMedium)
 Status.Position = UDim2.new(0, 18, 0, 124)
-Status.Size = UDim2.new(1, -36, 0, 20)
+Status.Size = UDim2.new(1, -36, 0, 30)
+Status.TextWrapped = true
+Status.TextYAlignment = Enum.TextYAlignment.Top
 
 local Results = Instance.new("ScrollingFrame")
-Results.Size = UDim2.new(1, -32, 1, -166)
-Results.Position = UDim2.new(0, 16, 0, 150)
+Results.Size = UDim2.new(1, -32, 1, -176)
+Results.Position = UDim2.new(0, 16, 0, 158)
 Results.BackgroundColor3 = Theme.panel
 Results.BorderSizePixel = 0
 Results.ScrollBarThickness = 4
@@ -225,11 +228,14 @@ local function createResult(item, index)
         setStatus("Loading asset " .. tostring(assetId) .. "...", Theme.accent)
 
         task.spawn(function()
-            -- DIRECT INSERT TEST:
-            -- Use InsertService:LoadAsset(assetId) exactly as requested.
-            local ok, result = pcall(function()
-                return InsertService:LoadAsset(assetId)
-            end)
+            -- DIAGNOSTIC V2:
+            -- Call the exact Roblox API directly so the pcall return value
+            -- contains the real Roblox error when loading is rejected.
+            local ok, result = pcall(
+                InsertService.LoadAsset,
+                InsertService,
+                assetId
+            )
 
             if ok and result then
                 local parentOk, parentError = pcall(function()
@@ -238,32 +244,64 @@ local function createResult(item, index)
 
                 if parentOk then
                     setStatus(
-                        "Inserted: " .. tostring(item.Name or assetId) ..
-                        " • ID " .. tostring(assetId),
+                        "SUCCESS • LoadAsset OK • ID " .. tostring(assetId) ..
+                        " • Parent = Workspace",
                         Theme.success
                     )
                     Insert.Text = "INSERTED"
                     Insert.BackgroundColor3 = Color3.fromRGB(32, 105, 77)
+
+                    print(
+                        "[HYAZ TOOLBOX] INSERT SUCCESS",
+                        "Name:", tostring(item.Name),
+                        "AssetId:", tostring(assetId),
+                        "Class:", result.ClassName
+                    )
                 else
+                    local parentMsg = tostring(parentError)
+
                     pcall(function()
                         result:Destroy()
                     end)
+
                     setStatus(
-                        "Loaded, but Workspace insert failed: " .. tostring(parentError),
+                        "LOAD OK, PARENT FAILED • ID " .. tostring(assetId) ..
+                        " • " .. parentMsg,
                         Theme.danger
                     )
                     Insert.Text = "RETRY"
                     Insert.Active = true
+
+                    warn(
+                        "[HYAZ TOOLBOX] Parent-to-Workspace failed",
+                        "AssetId:", assetId,
+                        "Error:", parentMsg
+                    )
                 end
             else
+                local errorMessage = tostring(result)
+
+                -- Keep the UI readable while sending the complete error
+                -- to Output for diagnosis.
+                if #errorMessage > 180 then
+                    errorMessage = string.sub(errorMessage, 1, 180) .. "..."
+                end
+
                 setStatus(
-                    "Insert failed • ID " .. tostring(assetId) ..
-                    " • " .. tostring(result),
+                    "LOAD FAILED • ID " .. tostring(assetId) ..
+                    " • " .. errorMessage,
                     Theme.danger
                 )
                 Insert.Text = "RETRY"
                 Insert.Active = true
-                warn("[HYAZ TOOLBOX] InsertService:LoadAsset failed:", result)
+
+                warn("========== HYAZ TOOLBOX DIAGNOSTIC ==========")
+                warn("Method: InsertService:LoadAsset(assetId)")
+                warn("Asset Name:", tostring(item.Name))
+                warn("Asset ID:", tostring(assetId))
+                warn("Success:", tostring(ok))
+                warn("Roblox Error:", tostring(result))
+                warn("============================================")
             end
         end)
     end)
