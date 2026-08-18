@@ -1,0 +1,773 @@
+-- ═══════════════════════════════════════════════════════════
+-- TERRAIN CRAFT — VERSI EXECUTOR (satu file utuh)
+-- ═══════════════════════════════════════════════════════════
+
+local Players    = game:GetService("Players")
+local Workspace   = game:GetService("Workspace")
+local RunService = game:GetService("RunService")
+local UIS        = game:GetService("UserInputService")
+
+local player = Players.LocalPlayer
+if not player then repeat task.wait() until Players.LocalPlayer; player = Players.LocalPlayer end
+if not player.Character then player.CharacterAdded:Wait() end
+
+local PlayerGui = player:WaitForChild("PlayerGui")
+local old = PlayerGui:FindFirstChild("TerrainCraftGui")
+if old then old:Destroy() end
+
+local ScreenGui = Instance.new("ScreenGui")
+ScreenGui.Name = "TerrainCraftGui"
+ScreenGui.ResetOnSpawn = false
+ScreenGui.IgnoreGuiInset = true
+ScreenGui.DisplayOrder = 999
+ScreenGui.Parent = PlayerGui
+
+local hasFile = (typeof(writefile) == "function") and (typeof(isfolder) == "function") and (typeof(makefolder) == "function")
+local function safeWrite(path, content) if not hasFile then return false end; local ok = pcall(writefile, path, content); return ok end
+local function safeMakeFolder(path) if not hasFile then return end; pcall(function() if not isfolder(path) then makefolder(path) end end) end
+
+-- ═══════════════════════════════════════════════════════════
+-- STATE
+-- ═══════════════════════════════════════════════════════════
+local TB = {
+	width = 6, height = 6, depth = 6,
+	blockSize = Vector3.new(6,6,6),
+	rotation = 0,
+	shapeIndex = 1,
+	shapes = {"Balok","Bola","Silinder","Baji"},
+	matIndex = 1,
+	placementOn = false,
+	terrainOnly = false,
+	tunnelMode = false,
+	seaLevelY = 0,
+	seaRadius = 100,
+	replaceSrc = "Grass",
+	replaceDst = "Sand",
+	lockY = false,
+	lockedY = 0,
+	activeTab = "ADD",
+	lastBrushTime = 0,
+	lastBrushPos = nil,
+	isMouseDown = false,
+	panelVisible = true,
+	terrainData = {},
+	undoStack = {},
+	redoStack = {},
+	limit = 700,
+	brushCooldown = 0.05,
+}
+
+local MATERIALS = {
+	"Grass","Ground","Mud","Sand","Snow","LeafyGrass","Rock","Slate",
+	"Basalt","Cobblestone","Granite","Limestone","Pavement","Salt",
+	"CrackedLava","Marble","Water","Ice","Glacier"
+}
+local MAT_NAMES = {
+	Grass="Rumput",Ground="Tanah",Mud="Lumpur",Sand="Pasir",Snow="Salju",
+	LeafyGrass="Rumput Daun",Rock="Batuan",Slate="Batu Tulis",Basalt="Basalt",
+	Cobblestone="Bebatuan",Granite="Granit",Limestone="Batu Kapur",
+	Pavement="Perkerasan",Salt="Garam",CrackedLava="Lava Retak",Marble="Marmer",
+	Water="Air",Ice="Es",Glacier="Gletser"
+}
+local MAT_ENUM = {
+	Grass=Enum.Material.Grass, Ground=Enum.Material.Ground, Mud=Enum.Material.Mud,
+	Sand=Enum.Material.Sand, Snow=Enum.Material.Snow, LeafyGrass=Enum.Material.LeafyGrass,
+	Rock=Enum.Material.Rock, Slate=Enum.Material.Slate, Basalt=Enum.Material.Basalt,
+	Cobblestone=Enum.Material.Cobblestone, Granite=Enum.Material.Granite,
+	Limestone=Enum.Material.Limestone, Pavement=Enum.Material.Pavement,
+	Salt=Enum.Material.Salt, CrackedLava=Enum.Material.CrackedLava,
+	Marble=Enum.Material.Marble, Water=Enum.Material.Water, Ice=Enum.Material.Ice,
+	Glacier=Enum.Material.Glacier
+}
+TB.currentMat = MATERIALS[1]
+
+local function getTerrain() return Workspace:FindFirstChild("Terrain") end
+
+local function totalTerrainCount()
+	local n = 0
+	for _, list in pairs(TB.terrainData) do
+		for _, e in ipairs(list) do if not e.undone then n = n + 1 end end
+	end
+	return n
+end
+
+local function accurateSize(shape, sx, sy, sz)
+	if shape == "Bola" then local r = sx/2; return Vector3.new(r*2,r*2,r*2), r
+	elseif shape == "Silinder" then return Vector3.new(sx,sy,sz), math.max(sx,sz)*0.6
+	else return Vector3.new(sx,sy,sz), nil end
+end
+
+-- ═══════════════════════════════════════════════════════════
+-- CORE ENGINE
+-- ═══════════════════════════════════════════════════════════
+local function fillTerrain(T, pos, size, shape, matE, rotDeg)
+	local cf = CFrame.new(pos) * CFrame.Angles(0, math.rad(rotDeg or 0), 0)
+	local accSize, accR = accurateSize(shape, size.X, size.Y, size.Z)
+	if shape == "Bola" then
+		T:FillBall(pos, accR, matE)
+	elseif shape == "Silinder" then
+		T:FillCylinder(cf * CFrame.Angles(0,0,math.rad(90)), size.Y, accR, matE)
+	else
+		T:FillBlock(cf, accSize, matE)
+	end
+end
+
+local function placeTerrain(pos, size, shape, matName, rotDeg)
+	local T = getTerrain(); if not T then return nil end
+	local matE = MAT_ENUM[matName]; if not matE then return nil end
+	if not TB.terrainData[matName] then TB.terrainData[matName] = {} end
+	local rot = rotDeg or 0
+	local entry = { pos = pos, size = size, shape = shape, mat = matName, rot = rot, undone = false }
+	table.insert(TB.terrainData[matName], entry)
+	pcall(fillTerrain, T, pos, size, shape, matE, rot)
+	return entry
+end
+
+local function pushUndo(matName, index)
+	table.insert(TB.undoStack, {mat = matName, index = index})
+	if #TB.undoStack > 150 then table.remove(TB.undoStack, 1) end
+	TB.redoStack = {}
+end
+
+local function undo()
+	if #TB.undoStack == 0 then return end
+	local last = table.remove(TB.undoStack)
+	table.insert(TB.redoStack, last)
+	local T = getTerrain(); if not T then return end
+	local list = TB.terrainData[last.mat]
+	local e = list and list[last.index]
+	if e then
+		e.undone = true
+		pcall(function()
+			local cf = CFrame.new(e.pos) * CFrame.Angles(0, math.rad(e.rot), 0)
+			if e.shape == "Bola" then T:FillBall(e.pos, e.size.X/2, Enum.Material.Air)
+			elseif e.shape == "Silinder" then T:FillCylinder(cf*CFrame.Angles(0,0,math.rad(90)), e.size.Y, math.max(e.size.X,e.size.Z)*0.6, Enum.Material.Air)
+			else T:FillBlock(cf, e.size, Enum.Material.Air) end
+		end)
+	end
+end
+
+local function redo()
+	if #TB.redoStack == 0 then return end
+	local e2 = table.remove(TB.redoStack)
+	table.insert(TB.undoStack, e2)
+	local T = getTerrain(); if not T then return end
+	local list = TB.terrainData[e2.mat]
+	local e = list and list[e2.index]
+	if e then
+		e.undone = false
+		pcall(fillTerrain, T, e.pos, e.size, e.shape, MAT_ENUM[e.mat], e.rot)
+	end
+end
+
+local function brushOnce(pos)
+	if not TB.placementOn then return end
+	if not MAT_ENUM[TB.currentMat] then return end
+	local t = tick()
+	if t - TB.lastBrushTime < TB.brushCooldown then return end
+	local minDist = math.min(TB.width, TB.height, TB.depth) * 0.8
+	if TB.lastBrushPos and (pos - TB.lastBrushPos).Magnitude < minDist then return end
+	if totalTerrainCount() >= TB.limit then return end
+	TB.lastBrushTime = t
+	TB.lastBrushPos = pos
+	local shape = TB.shapes[TB.shapeIndex]
+	local entry = placeTerrain(pos, TB.blockSize, shape, TB.currentMat, TB.rotation)
+	if entry then pushUndo(TB.currentMat, #TB.terrainData[TB.currentMat]) end
+end
+
+-- ═══════════════════════════════════════════════════════════
+-- PART → TERRAIN NATURAL
+-- ═══════════════════════════════════════════════════════════
+local function hash2d(cx, cz)
+	local h = (cx * 374761393 + cz * 668265263) % 2147483647
+	h = bit32.bxor(h, bit32.rshift(h, 13)) * 1274126177
+	h = h % 2147483647
+	h = bit32.bxor(h, bit32.rshift(h, 16))
+	return math.abs(h % 100000)
+end
+local function seedFromPos(px, py, pz)
+	local base = hash2d(math.floor(px/4), math.floor(pz/4))
+	return (base + math.floor(py*3.7)) % 100000
+end
+local function pseudoNoise(n)
+	n = math.floor(n) % 2147483647
+	n = bit32.bxor(bit32.lshift(n, 13) % 2147483647, n)
+	n = (n * (n*n*15731 + 789221) + 1376312589)
+	return math.abs(math.sin(n))
+end
+local function reliefAt(cx, cz, seed, strength, density)
+	local s, amp, h = density, strength*2, 0
+	for oct = 0, 2 do
+		local f = s + oct
+		local nx = (cx/f) + seed % 97
+		local nz = (cz/f) + seed % 89
+		h = h + math.sin(nx*2.3 + seed%13) * math.sin(nz*1.7 + seed%7) * (amp/(oct+1))
+	end
+	h = h + (pseudoNoise(cx*13+seed) - 0.5) * (amp*0.4)
+	return h
+end
+local function bakeNaturalTerrain(T, center, size, matE, seed, strength, density)
+	local g = 4
+	local wHalf, dHalf, hBase = size.X/2, size.Z/2, size.Y/2
+	for wx = -wHalf, wHalf, g do
+		for wz = -dHalf, dHalf, g do
+			local cellSeed = seed + hash2d(math.floor(wx), math.floor(wz)) % 500
+			local isHole = pseudoNoise(math.floor((wx+wz)*3.7) + cellSeed) < 0.15
+			local topY = reliefAt(wx, wz, cellSeed, strength, density)
+			local baseY = -hBase * 0.8
+			if not isHole then
+				for ty = baseY, topY, g do
+					T:FillBlock(CFrame.new(center.X+wx, center.Y+ty, center.Z+wz), Vector3.new(g,g,g), matE)
+				end
+			end
+		end
+		task.wait()
+	end
+end
+local function applyTerrainForPart(part, matName)
+	local T = getTerrain(); if not T then return 0 end
+	local matE = MAT_ENUM[matName]; if not matE then return 0 end
+	local center = part.Position
+	local sz = part.Size
+	local wSize = math.clamp(sz.X, 6, 40)
+	local dSize = math.clamp(sz.Z, 6, 40)
+	local hSize = math.clamp(sz.Y, 4, 40)
+	local seed = seedFromPos(center.X, center.Y, center.Z) + math.random(0, 999)
+	local strength = 4 + (seed % 3)
+	local density  = 3 + (seed % 2)
+	local ok = pcall(bakeNaturalTerrain, T, center, Vector3.new(wSize,hSize,dSize), matE, seed, strength, density)
+	return ok and 1 or 0
+end
+local function convertPartsToTerrain()
+	local T = getTerrain(); if not T then return 0 end
+	local c = 0
+	for _, matName in ipairs(MATERIALS) do
+		local f = Workspace:FindFirstChild(matName)
+		if f then
+			for _, part in ipairs(f:GetChildren()) do
+				if part:IsA("BasePart") then
+					c = c + applyTerrainForPart(part, matName)
+					task.wait()
+				end
+			end
+		end
+	end
+	return c
+end
+
+local function applySeaLevel(targetY, matName, radius)
+	local T = getTerrain(); if not T then return false end
+	local matE = MAT_ENUM[matName] or Enum.Material.Water
+	local step = 8
+	local ok = pcall(function()
+		for dx = -radius, radius, step do
+			for dz = -radius, radius, step do
+				T:FillBlock(CFrame.new(dx, targetY-step/2, dz), Vector3.new(step,step,step), matE)
+			end
+			task.wait()
+		end
+	end)
+	return ok
+end
+
+local function replaceMaterial(fromMat, toMat)
+	local T = getTerrain(); if not T then return 0 end
+	local toE = MAT_ENUM[toMat]; if not toE then return 0 end
+	local count = 0
+	if TB.terrainData[fromMat] then
+		if not TB.terrainData[toMat] then TB.terrainData[toMat] = {} end
+		for _, e in ipairs(TB.terrainData[fromMat]) do
+			if not e.undone then
+				e.mat = toMat
+				table.insert(TB.terrainData[toMat], e)
+				pcall(fillTerrain, T, e.pos, e.size, e.shape, toE, e.rot)
+				count = count + 1
+			end
+		end
+		TB.terrainData[fromMat] = {}
+	end
+	return count
+end
+
+local function clearAll()
+	TB.terrainData = {}
+	TB.undoStack = {}
+	TB.redoStack = {}
+	TB.lastBrushPos = nil
+end
+
+-- ═══════════════════════════════════════════════════════════
+-- UI BARU — STYLE STUDIO (gelap, aksen biru, rapi)
+-- ═══════════════════════════════════════════════════════════
+local UI = {}
+local PANEL_W, PANEL_H = 260, 300
+
+local toggleBtn = Instance.new("TextButton")
+toggleBtn.Size = UDim2.new(0, 40, 0, 40)
+toggleBtn.Position = UDim2.new(0, 10, 0, 80)
+toggleBtn.BackgroundColor3 = Color3.fromRGB(35,135,55)
+toggleBtn.Text = "⛰"
+toggleBtn.TextSize = 18
+toggleBtn.Font = Enum.Font.GothamBold
+toggleBtn.TextColor3 = Color3.new(1,1,1)
+toggleBtn.BorderSizePixel = 0
+toggleBtn.Parent = ScreenGui
+Instance.new("UICorner", toggleBtn).CornerRadius = UDim.new(1,0)
+
+local Main = Instance.new("Frame")
+Main.Size = UDim2.new(0, PANEL_W, 0, PANEL_H)
+Main.Position = UDim2.new(0, 58, 0, 80)
+Main.BackgroundColor3 = Color3.fromRGB(45,45,45)
+Main.BorderSizePixel = 0
+Main.Visible = false
+Main.Parent = ScreenGui
+Instance.new("UICorner", Main).CornerRadius = UDim.new(0,6)
+local mainStroke = Instance.new("UIStroke", Main)
+mainStroke.Color = Color3.fromRGB(15,15,15)
+mainStroke.Thickness = 1
+
+-- aksen biru atas
+local topAccent = Instance.new("Frame")
+topAccent.Size = UDim2.new(1,0,0,2)
+topAccent.BackgroundColor3 = Color3.fromRGB(0,162,255)
+topAccent.BorderSizePixel = 0
+topAccent.Parent = Main
+
+-- Title bar (drag handle)
+local TitleBar = Instance.new("TextButton")
+TitleBar.Size = UDim2.new(1,0,0,24)
+TitleBar.Position = UDim2.new(0,0,0,2)
+TitleBar.BackgroundColor3 = Color3.fromRGB(60,60,60)
+TitleBar.BorderSizePixel = 0
+TitleBar.Text = ""
+TitleBar.AutoButtonColor = false
+TitleBar.Parent = Main
+
+local titleIcon = Instance.new("Frame")
+titleIcon.Size = UDim2.new(0,12,0,12)
+titleIcon.Position = UDim2.new(0,6,0.5,-6)
+titleIcon.BackgroundColor3 = Color3.fromRGB(0,162,255)
+titleIcon.BorderSizePixel = 0
+titleIcon.Parent = TitleBar
+Instance.new("UICorner", titleIcon).CornerRadius = UDim.new(0,2)
+
+local titleLabel = Instance.new("TextLabel")
+titleLabel.Size = UDim2.new(1,-50,1,0)
+titleLabel.Position = UDim2.new(0,24,0,0)
+titleLabel.BackgroundTransparency = 1
+titleLabel.Text = "Terrain Craft"
+titleLabel.Font = Enum.Font.GothamBold
+titleLabel.TextSize = 11
+titleLabel.TextColor3 = Color3.fromRGB(230,230,230)
+titleLabel.TextXAlignment = Enum.TextXAlignment.Left
+titleLabel.Parent = TitleBar
+
+local CloseBtn = Instance.new("TextButton")
+CloseBtn.Size = UDim2.new(0,20,0,18)
+CloseBtn.Position = UDim2.new(1,-24,0,3)
+CloseBtn.BackgroundColor3 = Color3.fromRGB(165,42,42)
+CloseBtn.Text = "✕"
+CloseBtn.TextColor3 = Color3.new(1,1,1)
+CloseBtn.Font = Enum.Font.GothamBold
+CloseBtn.TextSize = 10
+CloseBtn.Parent = TitleBar
+Instance.new("UICorner", CloseBtn).CornerRadius = UDim.new(0,4)
+
+-- Drag
+do
+	local dragging, dragStart, startPos
+	TitleBar.InputBegan:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+			dragging = true; dragStart = input.Position; startPos = Main.Position
+		end
+	end)
+	TitleBar.InputEnded:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+			dragging = false
+		end
+	end)
+	UIS.InputChanged:Connect(function(input)
+		if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+			local d = input.Position - dragStart
+			Main.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset+d.X, startPos.Y.Scale, startPos.Y.Offset+d.Y)
+		end
+	end)
+end
+
+-- Tab bar (dengan indikator biru bawah tab aktif, seperti Studio)
+local TabBar = Instance.new("Frame")
+TabBar.Size = UDim2.new(1,0,0,26)
+TabBar.Position = UDim2.new(0,0,0,26)
+TabBar.BackgroundColor3 = Color3.fromRGB(55,55,55)
+TabBar.BorderSizePixel = 0
+TabBar.Parent = Main
+
+local tabNames = {"ADD","REMOVE","TOOL"}
+local tabW = PANEL_W/3
+UI.tabBtns, UI.tabInd = {}, {}
+for i, tn in ipairs(tabNames) do
+	local b = Instance.new("TextButton")
+	b.Size = UDim2.new(0, tabW, 1, -1)
+	b.Position = UDim2.new(0, (i-1)*tabW, 0, 0)
+	b.BackgroundColor3 = Color3.fromRGB(55,55,55)
+	b.Text = tn
+	b.Font = Enum.Font.GothamBold
+	b.TextSize = 10
+	b.TextColor3 = (i==1) and Color3.new(1,1,1) or Color3.fromRGB(170,170,170)
+	b.BorderSizePixel = 0
+	b.Parent = TabBar
+	local ind = Instance.new("Frame")
+	ind.Size = UDim2.new(1,0,0,2)
+	ind.Position = UDim2.new(0,0,1,-2)
+	ind.BackgroundColor3 = Color3.fromRGB(0,162,255)
+	ind.BorderSizePixel = 0
+	ind.Visible = (i==1)
+	ind.Parent = b
+	UI.tabBtns[tn] = b
+	UI.tabInd[tn] = ind
+end
+
+-- Content
+local Content = Instance.new("ScrollingFrame")
+Content.Size = UDim2.new(1,0,1,-52)
+Content.Position = UDim2.new(0,0,0,52)
+Content.BackgroundColor3 = Color3.fromRGB(45,45,45)
+Content.BorderSizePixel = 0
+Content.ScrollBarThickness = 3
+Content.CanvasSize = UDim2.new(0,0,0,500)
+Content.Parent = Main
+
+-- Helper style Studio: label, button dengan warna & hover
+local function mkLbl(parent, text, pos, size)
+	local l = Instance.new("TextLabel")
+	l.Size = size
+	l.Position = pos
+	l.BackgroundTransparency = 1
+	l.Text = text
+	l.TextColor3 = Color3.fromRGB(195,195,195)
+	l.Font = Enum.Font.Gotham
+	l.TextSize = 10
+	l.TextXAlignment = Enum.TextXAlignment.Left
+	l.Parent = parent
+	return l
+end
+local function mkBtn(parent, text, pos, size, color)
+	local b = Instance.new("TextButton")
+	b.Size = size
+	b.Position = pos
+	b.Text = text
+	local c = color or Color3.fromRGB(72,72,72)
+	b.BackgroundColor3 = c
+	b.TextColor3 = Color3.fromRGB(220,220,220)
+	b.Font = Enum.Font.GothamSemibold
+	b.TextSize = 10
+	b.BorderSizePixel = 0
+	b.AutoButtonColor = false
+	b.Parent = parent
+	Instance.new("UICorner", b).CornerRadius = UDim.new(0,4)
+	b.MouseEnter:Connect(function() b.BackgroundColor3 = Color3.fromRGB(math.min(c.R*255+18,255),math.min(c.G*255+18,255),math.min(c.B*255+18,255)) end)
+	b.MouseLeave:Connect(function() b.BackgroundColor3 = c end)
+	return b
+end
+local function mkSep(parent, y)
+	local s = Instance.new("Frame")
+	s.Size = UDim2.new(1,-12,0,1)
+	s.Position = UDim2.new(0,6,0,y)
+	s.BackgroundColor3 = Color3.fromRGB(30,30,30)
+	s.BorderSizePixel = 0
+	s.Parent = parent
+end
+
+-- ══════════ FRAME ADD ══════════
+local addF = Instance.new("Frame"); addF.Size = UDim2.new(1,0,0,300); addF.BackgroundTransparency = 1; addF.Parent = Content
+
+mkLbl(addF, "Material:", UDim2.new(0,6,0,6), UDim2.new(0,60,0,20))
+UI.matBtn = mkBtn(addF, MAT_NAMES[TB.currentMat], UDim2.new(0,68,0,6), UDim2.new(0,178,0,20), Color3.fromRGB(62,62,62))
+
+mkLbl(addF, "Bentuk:", UDim2.new(0,6,0,30), UDim2.new(0,60,0,20))
+UI.shapeBtn = mkBtn(addF, TB.shapes[1], UDim2.new(0,68,0,30), UDim2.new(0,178,0,20), Color3.fromRGB(62,62,62))
+mkSep(addF, 54)
+
+mkLbl(addF, "Ukuran:", UDim2.new(0,6,0,58), UDim2.new(0,50,0,20))
+UI.sizeMinus = mkBtn(addF, "-", UDim2.new(0,58,0,58), UDim2.new(0,22,0,20), Color3.fromRGB(88,50,50))
+UI.sizeLabel = mkLbl(addF, "6", UDim2.new(0,84,0,58), UDim2.new(0,26,0,20))
+UI.sizeLabel.TextXAlignment = Enum.TextXAlignment.Center
+UI.sizePlus = mkBtn(addF, "+", UDim2.new(0,114,0,58), UDim2.new(0,22,0,20), Color3.fromRGB(48,78,48))
+mkSep(addF, 82)
+
+UI.placeBtn = mkBtn(addF, "🖌 Brush: OFF", UDim2.new(0,6,0,86), UDim2.new(1,-12,0,24), Color3.fromRGB(42,162,68))
+UI.convertBtn = mkBtn(addF, "Konversi Part → Terrain", UDim2.new(0,6,0,114), UDim2.new(1,-12,0,24), Color3.fromRGB(80,45,120))
+mkSep(addF, 142)
+
+UI.undoBtn = mkBtn(addF, "↩ Undo", UDim2.new(0,6,0,146), UDim2.new(0.48,-6,0,22), Color3.fromRGB(130,95,25))
+UI.redoBtn = mkBtn(addF, "↪ Redo", UDim2.new(0.5,3,0,146), UDim2.new(0.48,-6,0,22), Color3.fromRGB(95,75,25))
+
+-- ══════════ FRAME REMOVE ══════════
+local remF = Instance.new("Frame"); remF.Size = UDim2.new(1,0,0,260); remF.BackgroundTransparency = 1; remF.Visible = false; remF.Parent = Content
+
+UI.tunnelBtn = mkBtn(remF, "Mode Gali: OFF", UDim2.new(0,6,0,6), UDim2.new(1,-12,0,24), Color3.fromRGB(68,68,100))
+mkSep(remF, 36)
+
+mkLbl(remF, "Sea Level Y:", UDim2.new(0,6,0,40), UDim2.new(0,70,0,20))
+UI.slYMinus = mkBtn(remF, "-4", UDim2.new(0,80,0,40), UDim2.new(0,30,0,20), Color3.fromRGB(80,50,50))
+UI.slYDisp = mkLbl(remF, "0", UDim2.new(0,114,0,40), UDim2.new(0,30,0,20))
+UI.slYDisp.TextXAlignment = Enum.TextXAlignment.Center
+UI.slYPlus = mkBtn(remF, "+4", UDim2.new(0,148,0,40), UDim2.new(0,30,0,20), Color3.fromRGB(48,78,48))
+
+mkLbl(remF, "Radius:", UDim2.new(0,6,0,64), UDim2.new(0,70,0,20))
+UI.slRadiusMinus = mkBtn(remF, "-20", UDim2.new(0,80,0,64), UDim2.new(0,30,0,20), Color3.fromRGB(80,50,50))
+UI.slRadiusDisp = mkLbl(remF, "100", UDim2.new(0,114,0,64), UDim2.new(0,30,0,20))
+UI.slRadiusDisp.TextXAlignment = Enum.TextXAlignment.Center
+UI.slRadiusPlus = mkBtn(remF, "+20", UDim2.new(0,148,0,64), UDim2.new(0,30,0,20), Color3.fromRGB(48,78,48))
+
+UI.seaLevelBtn = mkBtn(remF, "🌊 APPLY SEA LEVEL", UDim2.new(0,6,0,92), UDim2.new(1,-12,0,24), Color3.fromRGB(0,80,160))
+mkSep(remF, 122)
+
+UI.clearBtn = mkBtn(remF, "🗑 CLEAR SEMUA", UDim2.new(0,6,0,126), UDim2.new(1,-12,0,24), Color3.fromRGB(145,38,38))
+
+-- ══════════ FRAME TOOL ══════════
+local toolF = Instance.new("Frame"); toolF.Size = UDim2.new(1,0,0,260); toolF.BackgroundTransparency = 1; toolF.Visible = false; toolF.Parent = Content
+
+mkLbl(toolF, "Ganti Material:", UDim2.new(0,6,0,6), UDim2.new(1,-12,0,18))
+mkLbl(toolF, "Dari:", UDim2.new(0,6,0,28), UDim2.new(0,36,0,20))
+UI.srcMatBtn = mkBtn(toolF, TB.replaceSrc, UDim2.new(0,44,0,28), UDim2.new(0,90,0,20), Color3.fromRGB(62,62,78))
+mkLbl(toolF, "→", UDim2.new(0,140,0,28), UDim2.new(0,16,0,20))
+UI.dstMatBtn = mkBtn(toolF, TB.replaceDst, UDim2.new(0,158,0,28), UDim2.new(0,90,0,20), Color3.fromRGB(62,62,78))
+UI.replaceBtn = mkBtn(toolF, "🔁 REPLACE SEKARANG", UDim2.new(0,6,0,54), UDim2.new(1,-12,0,24), Color3.fromRGB(120,60,0))
+mkSep(toolF, 84)
+
+UI.saveBtn = mkBtn(toolF, "💾 Simpan ke File", UDim2.new(0,6,0,88), UDim2.new(1,-12,0,24), Color3.fromRGB(37,130,65))
+mkSep(toolF, 118)
+
+UI.infoLabel = mkLbl(toolF, "Total: 0 / " .. TB.limit, UDim2.new(0,6,0,122), UDim2.new(1,-12,0,20))
+
+-- ═══════════════════════════════════════════════════════════
+-- EVENTS
+-- ═══════════════════════════════════════════════════════════
+toggleBtn.MouseButton1Click:Connect(function()
+	TB.panelVisible = not TB.panelVisible
+	Main.Visible = TB.panelVisible
+end)
+CloseBtn.MouseButton1Click:Connect(function()
+	TB.panelVisible = false
+	Main.Visible = false
+end)
+
+local function updateInfo() UI.infoLabel.Text = "Total: " .. totalTerrainCount() .. " / " .. TB.limit end
+
+local function setTab(tab)
+	TB.activeTab = tab
+	addFrame.Visible = (tab == "ADD")
+	removeFrame.Visible = (tab == "REMOVE")
+	toolFrame.Visible = (tab == "TOOL")
+	local sel = Color3.fromRGB(80,120,200)
+	local base = Color3.fromRGB(50,50,58)
+	UI.tabAdd.BackgroundColor3 = (tab=="ADD") and sel or base
+	UI.tabRemove.BackgroundColor3 = (tab=="REMOVE") and sel or base
+	UI.tabTool.BackgroundColor3 = (tab=="TOOL") and sel or base
+end
+UI.tabAdd.MouseButton1Click:Connect(function() setTab("ADD") end)
+UI.tabRemove.MouseButton1Click:Connect(function() setTab("REMOVE") end)
+UI.tabTool.MouseButton1Click:Connect(function() setTab("TOOL") end)
+setTab("ADD")
+
+local function updateMatLabel() UI.matLabel.Text = MAT_NAMES[TB.currentMat] or TB.currentMat end
+UI.matPrev.MouseButton1Click:Connect(function()
+	TB.matIndex = TB.matIndex - 1
+	if TB.matIndex < 1 then TB.matIndex = #MATERIALS end
+	TB.currentMat = MATERIALS[TB.matIndex]
+	updateMatLabel()
+end)
+UI.matNext.MouseButton1Click:Connect(function()
+	TB.matIndex = TB.matIndex + 1
+	if TB.matIndex > #MATERIALS then TB.matIndex = 1 end
+	TB.currentMat = MATERIALS[TB.matIndex]
+	updateMatLabel()
+end)
+
+local function updateShapeLabel() UI.shapeLabel.Text = TB.shapes[TB.shapeIndex] end
+UI.shapePrev.MouseButton1Click:Connect(function()
+	TB.shapeIndex = TB.shapeIndex - 1
+	if TB.shapeIndex < 1 then TB.shapeIndex = #TB.shapes end
+	updateShapeLabel()
+end)
+UI.shapeNext.MouseButton1Click:Connect(function()
+	TB.shapeIndex = TB.shapeIndex + 1
+	if TB.shapeIndex > #TB.shapes then TB.shapeIndex = 1 end
+	updateShapeLabel()
+end)
+
+local function updateSizeLabel() UI.sizeLabel.Text = tostring(TB.width) end
+UI.sizeMinus.MouseButton1Click:Connect(function()
+	TB.width = math.max(2, TB.width - 2); TB.height = TB.width; TB.depth = TB.width
+	TB.blockSize = Vector3.new(TB.width, TB.height, TB.depth)
+	updateSizeLabel()
+end)
+UI.sizePlus.MouseButton1Click:Connect(function()
+	TB.width = math.min(40, TB.width + 2); TB.height = TB.width; TB.depth = TB.width
+	TB.blockSize = Vector3.new(TB.width, TB.height, TB.depth)
+	updateSizeLabel()
+end)
+
+UI.placeBtn.MouseButton1Click:Connect(function()
+	TB.placementOn = not TB.placementOn
+	UI.placeBtn.Text = TB.placementOn and "Brush: ON" or "Brush: OFF"
+	UI.placeBtn.BackgroundColor3 = TB.placementOn and Color3.fromRGB(60,140,80) or Color3.fromRGB(55,55,65)
+end)
+
+UI.convertBtn.MouseButton1Click:Connect(function()
+	UI.convertBtn.Text = "Memproses..."
+	task.spawn(function()
+		local c = convertPartsToTerrain()
+		UI.convertBtn.Text = "Selesai (" .. c .. ")"
+		task.wait(2)
+		UI.convertBtn.Text = "Konversi Part->Terrain"
+		updateInfo()
+	end)
+end)
+
+UI.undoBtn.MouseButton1Click:Connect(function() undo(); updateInfo() end)
+UI.redoBtn.MouseButton1Click:Connect(function() redo(); updateInfo() end)
+
+UI.tunnelBtn.MouseButton1Click:Connect(function()
+	TB.tunnelMode = not TB.tunnelMode
+	UI.tunnelBtn.Text = TB.tunnelMode and "Mode Gali: ON" or "Mode Gali: OFF"
+	UI.tunnelBtn.BackgroundColor3 = TB.tunnelMode and Color3.fromRGB(180,60,60) or Color3.fromRGB(55,55,65)
+	if TB.tunnelMode then TB.placementOn = false; UI.placeBtn.Text = "Brush: OFF" end
+end)
+
+UI.slYMinus.MouseButton1Click:Connect(function() TB.seaLevelY = TB.seaLevelY - 4; UI.slYDisp.Text = tostring(TB.seaLevelY) end)
+UI.slYPlus.MouseButton1Click:Connect(function() TB.seaLevelY = TB.seaLevelY + 4; UI.slYDisp.Text = tostring(TB.seaLevelY) end)
+UI.slRadiusMinus.MouseButton1Click:Connect(function() TB.seaRadius = math.max(20, TB.seaRadius - 20); UI.slRadiusDisp.Text = tostring(TB.seaRadius) end)
+UI.slRadiusPlus.MouseButton1Click:Connect(function() TB.seaRadius = math.min(500, TB.seaRadius + 20); UI.slRadiusDisp.Text = tostring(TB.seaRadius) end)
+
+UI.seaLevelBtn.MouseButton1Click:Connect(function()
+	UI.seaLevelBtn.Text = "Memproses..."
+	task.spawn(function()
+		local ok = applySeaLevel(TB.seaLevelY, TB.currentMat, TB.seaRadius)
+		UI.seaLevelBtn.Text = ok and "Sea Level diterapkan" or "Gagal"
+		task.wait(2)
+		UI.seaLevelBtn.Text = "Terapkan Sea Level"
+	end)
+end)
+
+local clearPending = false
+UI.clearBtn.MouseButton1Click:Connect(function()
+	if not clearPending then
+		clearPending = true
+		UI.clearBtn.Text = "Klik lagi utk konfirmasi"
+		task.delay(3, function()
+			if clearPending then clearPending = false; UI.clearBtn.Text = "Clear Semua" end
+		end)
+	else
+		clearPending = false
+		clearAll()
+		UI.clearBtn.Text = "Clear Semua"
+		updateInfo()
+	end
+end)
+
+UI.srcMatBtn.MouseButton1Click:Connect(function()
+	local idx = table.find(MATERIALS, TB.replaceSrc) or 1
+	idx = idx + 1; if idx > #MATERIALS then idx = 1 end
+	TB.replaceSrc = MATERIALS[idx]
+	UI.srcMatLabel.Text = TB.replaceSrc
+end)
+UI.dstMatBtn.MouseButton1Click:Connect(function()
+	local idx = table.find(MATERIALS, TB.replaceDst) or 1
+	idx = idx + 1; if idx > #MATERIALS then idx = 1 end
+	TB.replaceDst = MATERIALS[idx]
+	UI.dstMatLabel.Text = TB.replaceDst
+end)
+
+UI.replaceBtn.MouseButton1Click:Connect(function()
+	UI.replaceBtn.Text = "Memproses..."
+	task.spawn(function()
+		local c = replaceMaterial(TB.replaceSrc, TB.replaceDst)
+		UI.replaceBtn.Text = c .. " diganti"
+		task.wait(2)
+		UI.replaceBtn.Text = "Ganti Material"
+	end)
+end)
+
+local function generateSaveScript()
+	local lines = {"-- Terrain Craft Export", "local T = workspace.Terrain"}
+	for matName, list in pairs(TB.terrainData) do
+		for _, e in ipairs(list) do
+			if not e.undone then
+				table.insert(lines, string.format(
+					"T:FillBlock(CFrame.new(%.2f,%.2f,%.2f)*CFrame.Angles(0,math.rad(%d),0), Vector3.new(%.2f,%.2f,%.2f), Enum.Material.%s)",
+					e.pos.X, e.pos.Y, e.pos.Z, e.rot, e.size.X, e.size.Y, e.size.Z, matName))
+			end
+		end
+	end
+	return table.concat(lines, "\n")
+end
+
+UI.saveBtn.MouseButton1Click:Connect(function()
+	if not hasFile then
+		UI.saveBtn.Text = "Executor tak dukung file"
+		task.wait(2); UI.saveBtn.Text = "Simpan ke File"
+		return
+	end
+	safeMakeFolder("TerrainCraft")
+	local ok = safeWrite("TerrainCraft/hasil_" .. os.time() .. ".lua", generateSaveScript())
+	UI.saveBtn.Text = ok and "Tersimpan!" or "Gagal simpan"
+	task.wait(2)
+	UI.saveBtn.Text = "Simpan ke File"
+end)
+
+-- ═══════════════════════════════════════════════════════════
+-- INPUT — raycast pakai kamera (lebih aman utk executor)
+-- ═══════════════════════════════════════════════════════════
+local Camera = Workspace.CurrentCamera
+
+local function getMouseHit()
+	local input = UIS:GetMouseLocation()
+	local unitRay = Camera:ViewportPointToRay(input.X, input.Y)
+	local ok, result = pcall(function()
+		local params = RaycastParams.new()
+		params.FilterType = Enum.RaycastFilterType.Exclude
+		if player.Character then params.FilterDescendantsInstances = {player.Character} end
+		return Workspace:Raycast(unitRay.Origin, unitRay.Direction * 1000, params)
+	end)
+	if ok and result then return result.Position end
+	return nil
+end
+
+UIS.InputBegan:Connect(function(input, processed)
+	if processed then return end
+	if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+		TB.isMouseDown = true
+		if TB.placementOn then
+			local pos = getMouseHit()
+			if pos then
+				if TB.lockY then pos = Vector3.new(pos.X, TB.lockedY, pos.Z) end
+				brushOnce(pos)
+				updateInfo()
+			end
+		end
+	end
+end)
+UIS.InputEnded:Connect(function(input)
+	if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+		TB.isMouseDown = false
+	end
+end)
+RunService.RenderStepped:Connect(function()
+	if TB.isMouseDown and TB.placementOn then
+		local pos = getMouseHit()
+		if pos then
+			if TB.lockY then pos = Vector3.new(pos.X, TB.lockedY, pos.Z) end
+			brushOnce(pos)
+			updateInfo()
+		end
+	end
+end)
+
+updateInfo()
+updateMatLabel()
+updateShapeLabel()
+updateSizeLabel()
+
+print("[TerrainCraft] Semua siap.")
