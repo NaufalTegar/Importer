@@ -1,0 +1,360 @@
+-- HYAZ NEXUS // INDEPENDENT ROBLOX TOOLBOX TEST
+-- Standalone prototype:
+-- 1) Search free Creator Store models without an Open Cloud API key.
+-- 2) Keep each returned AssetId.
+-- 3) Insert the selected model by Asset ID.
+--
+-- Roblox's documented InsertService:GetFreeModelsAsync() searches free models.
+-- AssetService:LoadAssetAsync() is used for loading public third-party assets.
+-- The experience must allow third-party/free asset loading where Roblox requires it.
+
+local Players = game:GetService("Players")
+local UserInputService = game:GetService("UserInputService")
+local InsertService = game:GetService("InsertService")
+local AssetService = game:GetService("AssetService")
+local CoreGui = game:GetService("CoreGui")
+
+local LocalPlayer = Players.LocalPlayer
+local Parent = (pcall(function() return CoreGui.Name end) and CoreGui) or LocalPlayer:WaitForChild("PlayerGui")
+
+pcall(function()
+    local old = Parent:FindFirstChild("HYAZ_INDEPENDENT_TOOLBOX")
+    if old then old:Destroy() end
+end)
+
+local Theme = {
+    bg = Color3.fromRGB(12, 16, 24),
+    panel = Color3.fromRGB(18, 24, 35),
+    panel2 = Color3.fromRGB(23, 30, 44),
+    border = Color3.fromRGB(48, 61, 84),
+    text = Color3.fromRGB(232, 238, 248),
+    muted = Color3.fromRGB(145, 158, 181),
+    accent = Color3.fromRGB(75, 190, 255),
+    success = Color3.fromRGB(80, 220, 145),
+    danger = Color3.fromRGB(255, 100, 125),
+}
+
+local function corner(obj, radius)
+    local c = Instance.new("UICorner")
+    c.CornerRadius = UDim.new(0, radius or 8)
+    c.Parent = obj
+    return c
+end
+
+local function outline(obj, color, transparency)
+    local s = Instance.new("UIStroke")
+    s.Color = color or Theme.border
+    s.Transparency = transparency or 0
+    s.Thickness = 1
+    s.Parent = obj
+    return s
+end
+
+local function label(parent, text, size, color, font)
+    local x = Instance.new("TextLabel")
+    x.BackgroundTransparency = 1
+    x.Text = text
+    x.TextColor3 = color or Theme.text
+    x.Font = font or Enum.Font.Gotham
+    x.TextSize = size or 14
+    x.TextXAlignment = Enum.TextXAlignment.Left
+    x.Parent = parent
+    return x
+end
+
+local UI = Instance.new("ScreenGui")
+UI.Name = "HYAZ_INDEPENDENT_TOOLBOX"
+UI.ResetOnSpawn = false
+UI.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+UI.Parent = Parent
+
+local Main = Instance.new("Frame")
+Main.Size = UDim2.new(0, 520, 0, 470)
+Main.Position = UDim2.new(0.5, -260, 0.5, -235)
+Main.BackgroundColor3 = Theme.bg
+Main.BorderSizePixel = 0
+Main.Parent = UI
+corner(Main, 12)
+outline(Main)
+
+local Header = Instance.new("Frame")
+Header.Size = UDim2.new(1, 0, 0, 62)
+Header.BackgroundColor3 = Theme.panel
+Header.BorderSizePixel = 0
+Header.Parent = Main
+corner(Header, 12)
+
+local HeaderMask = Instance.new("Frame")
+HeaderMask.Size = UDim2.new(1, 0, 0, 12)
+HeaderMask.Position = UDim2.new(0, 0, 1, -12)
+HeaderMask.BackgroundColor3 = Theme.panel
+HeaderMask.BorderSizePixel = 0
+HeaderMask.Parent = Header
+
+local Title = label(Header, "ROBLOX TOOLBOX", 18, Theme.text, Enum.Font.GothamBold)
+Title.Position = UDim2.new(0, 18, 0, 9)
+Title.Size = UDim2.new(1, -70, 0, 23)
+
+local Subtitle = label(Header, "INDEPENDENT CREATOR STORE TEST", 10, Theme.muted, Enum.Font.GothamMedium)
+Subtitle.Position = UDim2.new(0, 19, 0, 34)
+Subtitle.Size = UDim2.new(1, -70, 0, 16)
+
+local Close = Instance.new("TextButton")
+Close.Size = UDim2.new(0, 32, 0, 32)
+Close.Position = UDim2.new(1, -44, 0, 15)
+Close.BackgroundColor3 = Color3.fromRGB(47, 25, 38)
+Close.Text = "×"
+Close.TextColor3 = Theme.danger
+Close.Font = Enum.Font.GothamBold
+Close.TextSize = 21
+Close.Parent = Header
+corner(Close, 9)
+
+local SearchBox = Instance.new("TextBox")
+SearchBox.Size = UDim2.new(1, -112, 0, 40)
+SearchBox.Position = UDim2.new(0, 16, 0, 78)
+SearchBox.BackgroundColor3 = Theme.panel
+SearchBox.BorderSizePixel = 0
+SearchBox.PlaceholderText = "Search free models...  (example: tree)"
+SearchBox.PlaceholderColor3 = Theme.muted
+SearchBox.Text = ""
+SearchBox.TextColor3 = Theme.text
+SearchBox.Font = Enum.Font.Gotham
+SearchBox.TextSize = 13
+SearchBox.ClearTextOnFocus = false
+SearchBox.Parent = Main
+corner(SearchBox, 9)
+outline(SearchBox, Theme.border)
+
+local Search = Instance.new("TextButton")
+Search.Size = UDim2.new(0, 84, 0, 40)
+Search.Position = UDim2.new(1, -96, 0, 78)
+Search.BackgroundColor3 = Theme.accent
+Search.Text = "SEARCH"
+Search.TextColor3 = Color3.fromRGB(7, 13, 20)
+Search.Font = Enum.Font.GothamBold
+Search.TextSize = 11
+Search.Parent = Main
+corner(Search, 9)
+
+local Status = label(Main, "Ready — no API key required", 11, Theme.muted, Enum.Font.GothamMedium)
+Status.Position = UDim2.new(0, 18, 0, 124)
+Status.Size = UDim2.new(1, -36, 0, 20)
+
+local Results = Instance.new("ScrollingFrame")
+Results.Size = UDim2.new(1, -32, 1, -166)
+Results.Position = UDim2.new(0, 16, 0, 150)
+Results.BackgroundColor3 = Theme.panel
+Results.BorderSizePixel = 0
+Results.ScrollBarThickness = 4
+Results.ScrollBarImageColor3 = Theme.accent
+Results.CanvasSize = UDim2.new()
+Results.AutomaticCanvasSize = Enum.AutomaticSize.Y
+Results.Parent = Main
+corner(Results, 10)
+outline(Results, Theme.border)
+
+local Padding = Instance.new("UIPadding")
+Padding.PaddingTop = UDim.new(0, 8)
+Padding.PaddingBottom = UDim.new(0, 8)
+Padding.PaddingLeft = UDim.new(0, 8)
+Padding.PaddingRight = UDim.new(0, 8)
+Padding.Parent = Results
+
+local Layout = Instance.new("UIListLayout")
+Layout.Padding = UDim.new(0, 7)
+Layout.SortOrder = Enum.SortOrder.LayoutOrder
+Layout.Parent = Results
+
+local searching = false
+local resultsToken = 0
+
+local function setStatus(text, color)
+    Status.Text = text
+    Status.TextColor3 = color or Theme.muted
+end
+
+local function clearResults()
+    for _, child in ipairs(Results:GetChildren()) do
+        if child:IsA("Frame") then
+            child:Destroy()
+        end
+    end
+end
+
+local function createResult(item, index)
+    local card = Instance.new("Frame")
+    card.Size = UDim2.new(1, -2, 0, 72)
+    card.BackgroundColor3 = Theme.panel2
+    card.BorderSizePixel = 0
+    card.LayoutOrder = index
+    card.Parent = Results
+    corner(card, 8)
+    outline(card, Theme.border, 0.35)
+
+    local Name = label(card, tostring(item.Name or "Unnamed Model"), 13, Theme.text, Enum.Font.GothamBold)
+    Name.Position = UDim2.new(0, 12, 0, 9)
+    Name.Size = UDim2.new(1, -130, 0, 20)
+    Name.TextTruncate = Enum.TextTruncate.AtEnd
+
+    local creator = tostring(item.CreatorName or "Unknown creator")
+    local assetId = tonumber(item.AssetId) or tonumber(item.AssetVersionId) or 0
+
+    local Info = label(card, "by " .. creator .. "  •  ID: " .. tostring(assetId), 10, Theme.muted, Enum.Font.Gotham)
+    Info.Position = UDim2.new(0, 12, 0, 34)
+    Info.Size = UDim2.new(1, -130, 0, 17)
+    Info.TextTruncate = Enum.TextTruncate.AtEnd
+
+    local Insert = Instance.new("TextButton")
+    Insert.Size = UDim2.new(0, 92, 0, 32)
+    Insert.Position = UDim2.new(1, -104, 0.5, -16)
+    Insert.BackgroundColor3 = Color3.fromRGB(30, 84, 112)
+    Insert.Text = "INSERT"
+    Insert.TextColor3 = Theme.text
+    Insert.Font = Enum.Font.GothamBold
+    Insert.TextSize = 10
+    Insert.Parent = card
+    corner(Insert, 8)
+
+    Insert.MouseButton1Click:Connect(function()
+        if assetId <= 0 then
+            setStatus("This result has no usable Asset ID.", Theme.danger)
+            return
+        end
+
+        Insert.Text = "LOADING..."
+        Insert.Active = false
+        setStatus("Loading asset " .. tostring(assetId) .. "...", Theme.accent)
+
+        task.spawn(function()
+            local ok, result = pcall(function()
+                return AssetService:LoadAssetAsync(assetId)
+            end)
+
+            if not ok or not result then
+                -- Fallback for environments where LoadAssetAsync is unavailable.
+                ok, result = pcall(function()
+                    return InsertService:LoadAsset(assetId)
+                end)
+            end
+
+            if ok and result then
+                result.Parent = workspace
+                setStatus("Inserted: " .. tostring(item.Name or assetId), Theme.success)
+                Insert.Text = "INSERTED"
+                Insert.BackgroundColor3 = Color3.fromRGB(32, 105, 77)
+            else
+                setStatus("Insert failed for Asset ID " .. tostring(assetId), Theme.danger)
+                Insert.Text = "RETRY"
+                Insert.Active = true
+            end
+        end)
+    end)
+end
+
+local function searchModels(query)
+    if searching then return end
+
+    query = tostring(query or ""):gsub("^%s+", ""):gsub("%s+$", "")
+    if query == "" then
+        setStatus("Enter a search term first.", Theme.danger)
+        return
+    end
+
+    searching = true
+    resultsToken += 1
+    local token = resultsToken
+
+    Search.Text = "..."
+    Search.Active = false
+    clearResults()
+    setStatus("Searching free Creator Store models for: " .. query, Theme.accent)
+
+    task.spawn(function()
+        local ok, response = pcall(function()
+            return InsertService:GetFreeModelsAsync(query, 0)
+        end)
+
+        if token ~= resultsToken then return end
+
+        if not ok or not response then
+            searching = false
+            Search.Text = "SEARCH"
+            Search.Active = true
+            setStatus("Search failed. Your environment may not expose GetFreeModelsAsync.", Theme.danger)
+            return
+        end
+
+        local page = response
+        if type(response) == "table" and response[1] then
+            page = response[1]
+        end
+
+        local list = (type(page) == "table" and page.Results) or {}
+
+        if #list == 0 then
+            setStatus("No free models found for: " .. query, Theme.muted)
+        else
+            for i, item in ipairs(list) do
+                createResult(item, i)
+            end
+            setStatus(tostring(#list) .. " free model result(s) • no API key used", Theme.success)
+        end
+
+        searching = false
+        Search.Text = "SEARCH"
+        Search.Active = true
+    end)
+end
+
+Search.MouseButton1Click:Connect(function()
+    searchModels(SearchBox.Text)
+end)
+
+SearchBox.FocusLost:Connect(function(enterPressed)
+    if enterPressed then
+        searchModels(SearchBox.Text)
+    end
+end)
+
+Close.MouseButton1Click:Connect(function()
+    UI:Destroy()
+end)
+
+-- Drag window on touch/mouse.
+do
+    local dragging = false
+    local dragStart
+    local startPos
+
+    Header.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1
+            or input.UserInputType == Enum.UserInputType.Touch then
+            dragging = true
+            dragStart = input.Position
+            startPos = Main.Position
+        end
+    end)
+
+    UserInputService.InputChanged:Connect(function(input)
+        if not dragging then return end
+        if input.UserInputType == Enum.UserInputType.MouseMovement
+            or input.UserInputType == Enum.UserInputType.Touch then
+            local delta = input.Position - dragStart
+            Main.Position = UDim2.new(
+                startPos.X.Scale, startPos.X.Offset + delta.X,
+                startPos.Y.Scale, startPos.Y.Offset + delta.Y
+            )
+        end
+    end)
+
+    UserInputService.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1
+            or input.UserInputType == Enum.UserInputType.Touch then
+            dragging = false
+        end
+    end)
+end
+
+-- Initial hint.
+setStatus("Ready — type a model name and press SEARCH.", Theme.muted)
