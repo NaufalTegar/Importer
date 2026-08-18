@@ -1221,7 +1221,7 @@ local Subtitle=Instance.new("TextLabel",TitleBar)
 Subtitle.Size=UDim2.new(0,250,0,16)
 Subtitle.Position=UDim2.new(0,71,0,39)
 Subtitle.BackgroundTransparency=1
-Subtitle.Text="RBXM / RBXL  â€¢  ASSET CONTROL CENTER"
+Subtitle.Text="RBXM / RBXL  •  ASSET CONTROL CENTER"
 Subtitle.TextColor3=Theme.muted
 Subtitle.Font=Enum.Font.GothamMedium
 Subtitle.TextSize=8
@@ -1295,9 +1295,6 @@ CloseIcon.Position=UDim2.new(0.5,-7.5,0.5,-7.5)
 CloseIcon.BackgroundTransparency=1
 CloseIcon.Image=ICONS.CLOSE
 CloseIcon.ImageColor3=Color3.fromRGB(255,142,166)
-CloseIcon.TextColor3=Color3.fromRGB(255,142,166)
-CloseIcon.Font=Enum.Font.GothamBold
-CloseIcon.TextSize=18
 local CloseClick=Instance.new("TextButton",CloseBtn)
 CloseClick.Size=UDim2.new(1,0,1,0)
 CloseClick.BackgroundTransparency=1
@@ -1309,7 +1306,7 @@ addHover(MinClick,MinBtn,Theme.panel3,Color3.fromRGB(31,39,58))
 -- No HYAZ NEXUS text remains visible while minimized.
 local MiniIcon = Instance.new("Frame", TitleBar)
 MiniIcon.Name = "MiniIcon"
-MiniIcon.Size = UDim2.new(1,-44,1,0)
+MiniIcon.Size = UDim2.new(1,-40,1,0)
 MiniIcon.Position = UDim2.new(0,0,0,0)
 MiniIcon.BackgroundColor3 = Theme.panel
 MiniIcon.BackgroundTransparency = 0
@@ -1358,34 +1355,45 @@ MiniRestoreIcon.ZIndex = 23
 -- correctly switch between normal-window and mini-bar behavior.
 local minimized = false
 
--- Normal window dragging. In minimized mode, only the thin bar itself is draggable.
+-- Robust dragging for normal window AND minimized bar.
 do
-    local drag,ds,sp
+    local drag=false
+    local ds=nil
+    local sp=nil
+
     local function beginDrag(input)
         if input.UserInputType==Enum.UserInputType.MouseButton1 or input.UserInputType==Enum.UserInputType.Touch then
-            drag=true; ds=input.Position; sp=Main.Position
+            drag=true
+            ds=input.Position
+            sp=Main.Position
         end
     end
+
     TitleBar.InputBegan:Connect(function(input)
-        if minimized then
-            if input.UserInputType==Enum.UserInputType.MouseButton1 or input.UserInputType==Enum.UserInputType.Touch then
-                -- Restore button handles its own click; the rest of the bar is draggable.
-                local x = input.Position.X
-                local barRight = TitleBar.AbsolutePosition.X + TitleBar.AbsoluteSize.X
-                if x < barRight - 40 then beginDrag(input) end
-            end
-        else
+        if not minimized then
             beginDrag(input)
         end
     end)
+
+    -- MiniIcon is the actual visible minimized bar, so it receives its own
+    -- drag input instead of relying on event propagation from TitleBar.
+    MiniIcon.InputBegan:Connect(function(input)
+        if minimized then
+            beginDrag(input)
+        end
+    end)
+
     UserInputService.InputChanged:Connect(function(input)
         if drag and (input.UserInputType==Enum.UserInputType.MouseMovement or input.UserInputType==Enum.UserInputType.Touch) then
             local d=input.Position-ds
             Main.Position=UDim2.new(sp.X.Scale,sp.X.Offset+d.X,sp.Y.Scale,sp.Y.Offset+d.Y)
         end
     end)
+
     UserInputService.InputEnded:Connect(function(input)
-        if input.UserInputType==Enum.UserInputType.MouseButton1 or input.UserInputType==Enum.UserInputType.Touch then drag=false end
+        if input.UserInputType==Enum.UserInputType.MouseButton1 or input.UserInputType==Enum.UserInputType.Touch then
+            drag=false
+        end
     end)
 end
 
@@ -1559,7 +1567,7 @@ SearchClearBtn.Size=UDim2.new(0,32,0,32)
 SearchClearBtn.Position=UDim2.new(1,-32,0,5)
 SearchClearBtn.BackgroundColor3=Theme.panel3
 SearchClearBtn.BorderSizePixel=0
-SearchClearBtn.Text="Ã—"
+SearchClearBtn.Text="×"
 SearchClearBtn.TextColor3=Theme.muted
 SearchClearBtn.Font=Enum.Font.GothamBold
 SearchClearBtn.TextSize=15
@@ -1960,7 +1968,7 @@ end)
 
 local NORMAL_MAIN_SIZE = UDim2.new(0,520,0,450)
 local NORMAL_MAIN_POS = UDim2.new(0.5,-260,0.5,-225)
-local MINI_MAIN_SIZE = UDim2.new(0,230,0,38)
+local MINI_MAIN_SIZE = UDim2.new(0,250,0,40)
 
 local function setHeaderChildVisible(child, visible)
     if child ~= MiniIcon and child ~= MiniRestoreClick and child ~= MiniDivider then
@@ -1979,12 +1987,13 @@ local function setMinimized(state)
             setHeaderChildVisible(child, false)
         end
 
+        -- Resize the root first; TitleBar then fills only the 230x38 mini window.
+        Main.Size = MINI_MAIN_SIZE
         TitleBar.Size = UDim2.new(1,0,1,0)
+        Main.Position = UDim2.new(0,12,0,58)
         MiniIcon.Visible = true
         MiniRestoreClick.Visible = true
         MiniDivider.Visible = true
-        Main.Size = MINI_MAIN_SIZE
-        Main.Position = UDim2.new(0,12,0,58)
     else
         MiniIcon.Visible = false
         MiniRestoreClick.Visible = false
@@ -2264,7 +2273,7 @@ local SpawnStatus = Instance.new("TextLabel", SpawnerPanel)
 SpawnStatus.Size = UDim2.new(1, -20, 0, 22)
 SpawnStatus.Position = UDim2.new(0, 10, 0, 202)
 SpawnStatus.BackgroundTransparency = 1
-SpawnStatus.Text = "â—  READY"
+SpawnStatus.Text = "●  READY"
 SpawnStatus.TextColor3 = Theme.accent
 SpawnStatus.Font = Enum.Font.GothamBold
 SpawnStatus.TextSize = 7
@@ -2274,7 +2283,7 @@ local AccessStatus = Instance.new("TextLabel", SpawnerPanel)
 AccessStatus.Size = UDim2.new(1, -20, 0, 28)
 AccessStatus.Position = UDim2.new(0, 10, 1, -38)
 AccessStatus.BackgroundTransparency = 1
-AccessStatus.Text = HYAZSpawner.isWhitelisted() and "ACCESS  â€¢  GRANTED" or "ACCESS  â€¢  DENIED"
+AccessStatus.Text = HYAZSpawner.isWhitelisted() and "ACCESS  •  GRANTED" or "ACCESS  •  DENIED"
 AccessStatus.TextColor3 = HYAZSpawner.isWhitelisted() and Theme.accent or Color3.fromRGB(255, 70, 80)
 AccessStatus.Font = Enum.Font.GothamBold
 AccessStatus.TextSize = 7
@@ -2332,13 +2341,13 @@ end
 
 SpawnBtn.MouseButton1Click:Connect(function()
     if not HYAZSpawner.isWhitelisted() then
-        SpawnStatus.Text = "â—  ACCESS DENIED"
+        SpawnStatus.Text = "●  ACCESS DENIED"
         SpawnStatus.TextColor3 = Color3.fromRGB(255, 70, 80)
         return
     end
 
     isTargeting = true
-    SpawnStatus.Text = "â—  CLICK WORLD TO PLACE"
+    SpawnStatus.Text = "●  CLICK WORLD TO PLACE"
     SpawnStatus.TextColor3 = Color3.fromRGB(255, 180, 70)
     SpawnBtn.BackgroundColor3 = Color3.fromRGB(125, 55, 18)
 end)
@@ -2373,13 +2382,13 @@ UserInputService.InputBegan:Connect(function(input, gameProcessed)
         if result then
             spawnAtPosition(CFrame.new(result.Position))
             isTargeting = false
-            SpawnStatus.Text = "â—  PART SPAWNED"
+            SpawnStatus.Text = "●  PART SPAWNED"
             SpawnStatus.TextColor3 = Theme.accent
             SpawnBtn.BackgroundColor3 = Theme.accentDark
 
             task.delay(2, function()
                 if SpawnStatus and SpawnStatus.Parent and not isTargeting then
-                    SpawnStatus.Text = "â—  READY"
+                    SpawnStatus.Text = "●  READY"
                 end
             end)
         end
