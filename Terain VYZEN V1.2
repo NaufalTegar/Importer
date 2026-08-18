@@ -542,7 +542,7 @@ mkSep(toolF, 118)
 UI.infoLabel = mkLbl(toolF, "Total: 0 / " .. TB.limit, UDim2.new(0,6,0,122), UDim2.new(1,-12,0,20))
 
 -- ═══════════════════════════════════════════════════════════
--- EVENTS
+-- EVENTS (disesuaikan dengan UI baru) — support Mouse & Touch
 -- ═══════════════════════════════════════════════════════════
 toggleBtn.MouseButton1Click:Connect(function()
 	TB.panelVisible = not TB.panelVisible
@@ -553,75 +553,68 @@ CloseBtn.MouseButton1Click:Connect(function()
 	Main.Visible = false
 end)
 
-local function updateInfo() UI.infoLabel.Text = "Total: " .. totalTerrainCount() .. " / " .. TB.limit end
+local function updateInfo()
+	if UI.infoLabel then UI.infoLabel.Text = "Total: " .. totalTerrainCount() .. " / " .. TB.limit end
+end
 
 local function setTab(tab)
 	TB.activeTab = tab
-	addFrame.Visible = (tab == "ADD")
-	removeFrame.Visible = (tab == "REMOVE")
-	toolFrame.Visible = (tab == "TOOL")
-	local sel = Color3.fromRGB(80,120,200)
-	local base = Color3.fromRGB(50,50,58)
-	UI.tabAdd.BackgroundColor3 = (tab=="ADD") and sel or base
-	UI.tabRemove.BackgroundColor3 = (tab=="REMOVE") and sel or base
-	UI.tabTool.BackgroundColor3 = (tab=="TOOL") and sel or base
+	addF.Visible = (tab == "ADD")
+	remF.Visible = (tab == "REMOVE")
+	toolF.Visible = (tab == "TOOL")
+	for name, btn in pairs(UI.tabBtns) do
+		local active = (name == tab)
+		btn.TextColor3 = active and Color3.new(1,1,1) or Color3.fromRGB(170,170,170)
+		UI.tabInd[name].Visible = active
+	end
 end
-UI.tabAdd.MouseButton1Click:Connect(function() setTab("ADD") end)
-UI.tabRemove.MouseButton1Click:Connect(function() setTab("REMOVE") end)
-UI.tabTool.MouseButton1Click:Connect(function() setTab("TOOL") end)
+for name, btn in pairs(UI.tabBtns) do
+	btn.MouseButton1Click:Connect(function() setTab(name) end)
+end
 setTab("ADD")
 
-local function updateMatLabel() UI.matLabel.Text = MAT_NAMES[TB.currentMat] or TB.currentMat end
-UI.matPrev.MouseButton1Click:Connect(function()
-	TB.matIndex = TB.matIndex - 1
-	if TB.matIndex < 1 then TB.matIndex = #MATERIALS end
-	TB.currentMat = MATERIALS[TB.matIndex]
-	updateMatLabel()
-end)
-UI.matNext.MouseButton1Click:Connect(function()
+-- ── Material cycle (klik tombol utk ganti material) ──
+UI.matBtn.MouseButton1Click:Connect(function()
 	TB.matIndex = TB.matIndex + 1
 	if TB.matIndex > #MATERIALS then TB.matIndex = 1 end
 	TB.currentMat = MATERIALS[TB.matIndex]
-	updateMatLabel()
+	UI.matBtn.Text = MAT_NAMES[TB.currentMat] or TB.currentMat
 end)
 
-local function updateShapeLabel() UI.shapeLabel.Text = TB.shapes[TB.shapeIndex] end
-UI.shapePrev.MouseButton1Click:Connect(function()
-	TB.shapeIndex = TB.shapeIndex - 1
-	if TB.shapeIndex < 1 then TB.shapeIndex = #TB.shapes end
-	updateShapeLabel()
-end)
-UI.shapeNext.MouseButton1Click:Connect(function()
+-- ── Shape cycle ──
+UI.shapeBtn.MouseButton1Click:Connect(function()
 	TB.shapeIndex = TB.shapeIndex + 1
 	if TB.shapeIndex > #TB.shapes then TB.shapeIndex = 1 end
-	updateShapeLabel()
+	UI.shapeBtn.Text = TB.shapes[TB.shapeIndex]
 end)
 
-local function updateSizeLabel() UI.sizeLabel.Text = tostring(TB.width) end
+-- ── Ukuran ──
 UI.sizeMinus.MouseButton1Click:Connect(function()
 	TB.width = math.max(2, TB.width - 2); TB.height = TB.width; TB.depth = TB.width
 	TB.blockSize = Vector3.new(TB.width, TB.height, TB.depth)
-	updateSizeLabel()
+	UI.sizeLabel.Text = tostring(TB.width)
 end)
 UI.sizePlus.MouseButton1Click:Connect(function()
 	TB.width = math.min(40, TB.width + 2); TB.height = TB.width; TB.depth = TB.width
 	TB.blockSize = Vector3.new(TB.width, TB.height, TB.depth)
-	updateSizeLabel()
+	UI.sizeLabel.Text = tostring(TB.width)
 end)
 
+-- ── Brush toggle ──
 UI.placeBtn.MouseButton1Click:Connect(function()
 	TB.placementOn = not TB.placementOn
-	UI.placeBtn.Text = TB.placementOn and "Brush: ON" or "Brush: OFF"
-	UI.placeBtn.BackgroundColor3 = TB.placementOn and Color3.fromRGB(60,140,80) or Color3.fromRGB(55,55,65)
+	UI.placeBtn.Text = TB.placementOn and "🖌 Brush: ON" or "🖌 Brush: OFF"
+	UI.placeBtn.BackgroundColor3 = TB.placementOn and Color3.fromRGB(42,190,68) or Color3.fromRGB(42,162,68)
 end)
 
+-- ── Konversi Part->Terrain ──
 UI.convertBtn.MouseButton1Click:Connect(function()
-	UI.convertBtn.Text = "Memproses..."
+	UI.convertBtn.Text = "⏳ Memproses..."
 	task.spawn(function()
 		local c = convertPartsToTerrain()
-		UI.convertBtn.Text = "Selesai (" .. c .. ")"
+		UI.convertBtn.Text = "✓ Selesai (" .. c .. ")"
 		task.wait(2)
-		UI.convertBtn.Text = "Konversi Part->Terrain"
+		UI.convertBtn.Text = "Konversi Part → Terrain"
 		updateInfo()
 	end)
 end)
@@ -629,11 +622,12 @@ end)
 UI.undoBtn.MouseButton1Click:Connect(function() undo(); updateInfo() end)
 UI.redoBtn.MouseButton1Click:Connect(function() redo(); updateInfo() end)
 
+-- ── REMOVE TAB ──
 UI.tunnelBtn.MouseButton1Click:Connect(function()
 	TB.tunnelMode = not TB.tunnelMode
 	UI.tunnelBtn.Text = TB.tunnelMode and "Mode Gali: ON" or "Mode Gali: OFF"
-	UI.tunnelBtn.BackgroundColor3 = TB.tunnelMode and Color3.fromRGB(180,60,60) or Color3.fromRGB(55,55,65)
-	if TB.tunnelMode then TB.placementOn = false; UI.placeBtn.Text = "Brush: OFF" end
+	UI.tunnelBtn.BackgroundColor3 = TB.tunnelMode and Color3.fromRGB(180,60,60) or Color3.fromRGB(68,68,100)
+	if TB.tunnelMode then TB.placementOn = false; UI.placeBtn.Text = "🖌 Brush: OFF" end
 end)
 
 UI.slYMinus.MouseButton1Click:Connect(function() TB.seaLevelY = TB.seaLevelY - 4; UI.slYDisp.Text = tostring(TB.seaLevelY) end)
@@ -642,12 +636,12 @@ UI.slRadiusMinus.MouseButton1Click:Connect(function() TB.seaRadius = math.max(20
 UI.slRadiusPlus.MouseButton1Click:Connect(function() TB.seaRadius = math.min(500, TB.seaRadius + 20); UI.slRadiusDisp.Text = tostring(TB.seaRadius) end)
 
 UI.seaLevelBtn.MouseButton1Click:Connect(function()
-	UI.seaLevelBtn.Text = "Memproses..."
+	UI.seaLevelBtn.Text = "⏳ Memproses..."
 	task.spawn(function()
 		local ok = applySeaLevel(TB.seaLevelY, TB.currentMat, TB.seaRadius)
-		UI.seaLevelBtn.Text = ok and "Sea Level diterapkan" or "Gagal"
+		UI.seaLevelBtn.Text = ok and "✓ Sea Level diterapkan" or "✗ Gagal"
 		task.wait(2)
-		UI.seaLevelBtn.Text = "Terapkan Sea Level"
+		UI.seaLevelBtn.Text = "🌊 APPLY SEA LEVEL"
 	end)
 end)
 
@@ -655,38 +649,39 @@ local clearPending = false
 UI.clearBtn.MouseButton1Click:Connect(function()
 	if not clearPending then
 		clearPending = true
-		UI.clearBtn.Text = "Klik lagi utk konfirmasi"
+		UI.clearBtn.Text = "⚠ Klik lagi konfirmasi"
 		task.delay(3, function()
-			if clearPending then clearPending = false; UI.clearBtn.Text = "Clear Semua" end
+			if clearPending then clearPending = false; UI.clearBtn.Text = "🗑 CLEAR SEMUA" end
 		end)
 	else
 		clearPending = false
 		clearAll()
-		UI.clearBtn.Text = "Clear Semua"
+		UI.clearBtn.Text = "🗑 CLEAR SEMUA"
 		updateInfo()
 	end
 end)
 
+-- ── TOOL TAB ──
 UI.srcMatBtn.MouseButton1Click:Connect(function()
 	local idx = table.find(MATERIALS, TB.replaceSrc) or 1
 	idx = idx + 1; if idx > #MATERIALS then idx = 1 end
 	TB.replaceSrc = MATERIALS[idx]
-	UI.srcMatLabel.Text = TB.replaceSrc
+	UI.srcMatBtn.Text = TB.replaceSrc
 end)
 UI.dstMatBtn.MouseButton1Click:Connect(function()
 	local idx = table.find(MATERIALS, TB.replaceDst) or 1
 	idx = idx + 1; if idx > #MATERIALS then idx = 1 end
 	TB.replaceDst = MATERIALS[idx]
-	UI.dstMatLabel.Text = TB.replaceDst
+	UI.dstMatBtn.Text = TB.replaceDst
 end)
 
 UI.replaceBtn.MouseButton1Click:Connect(function()
-	UI.replaceBtn.Text = "Memproses..."
+	UI.replaceBtn.Text = "⏳ Memproses..."
 	task.spawn(function()
 		local c = replaceMaterial(TB.replaceSrc, TB.replaceDst)
-		UI.replaceBtn.Text = c .. " diganti"
+		UI.replaceBtn.Text = "✓ " .. c .. " diganti"
 		task.wait(2)
-		UI.replaceBtn.Text = "Ganti Material"
+		UI.replaceBtn.Text = "🔁 REPLACE SEKARANG"
 	end)
 end)
 
@@ -707,25 +702,24 @@ end
 UI.saveBtn.MouseButton1Click:Connect(function()
 	if not hasFile then
 		UI.saveBtn.Text = "Executor tak dukung file"
-		task.wait(2); UI.saveBtn.Text = "Simpan ke File"
+		task.wait(2); UI.saveBtn.Text = "💾 Simpan ke File"
 		return
 	end
 	safeMakeFolder("TerrainCraft")
 	local ok = safeWrite("TerrainCraft/hasil_" .. os.time() .. ".lua", generateSaveScript())
-	UI.saveBtn.Text = ok and "Tersimpan!" or "Gagal simpan"
+	UI.saveBtn.Text = ok and "✓ Tersimpan!" or "✗ Gagal simpan"
 	task.wait(2)
-	UI.saveBtn.Text = "Simpan ke File"
+	UI.saveBtn.Text = "💾 Simpan ke File"
 end)
 
 -- ═══════════════════════════════════════════════════════════
--- INPUT — raycast pakai kamera (lebih aman utk executor)
+-- INPUT — SUPPORT MOUSE & TOUCH LAYAR HP
 -- ═══════════════════════════════════════════════════════════
 local Camera = Workspace.CurrentCamera
 
-local function getMouseHit()
-	local input = UIS:GetMouseLocation()
-	local unitRay = Camera:ViewportPointToRay(input.X, input.Y)
+local function screenToWorldHit(screenPos)
 	local ok, result = pcall(function()
+		local unitRay = Camera:ViewportPointToRay(screenPos.X, screenPos.Y)
 		local params = RaycastParams.new()
 		params.FilterType = Enum.RaycastFilterType.Exclude
 		if player.Character then params.FilterDescendantsInstances = {player.Character} end
@@ -735,39 +729,49 @@ local function getMouseHit()
 	return nil
 end
 
+local currentInputPos = nil -- posisi layar aktif (mouse atau jari)
+local isDrawing = false
+
+local function tryBrush()
+	if not TB.placementOn or not currentInputPos then return end
+	local pos = screenToWorldHit(currentInputPos)
+	if pos then
+		if TB.lockY then pos = Vector3.new(pos.X, TB.lockedY, pos.Z) end
+		brushOnce(pos)
+		updateInfo()
+	end
+end
+
 UIS.InputBegan:Connect(function(input, processed)
-	if processed then return end
-	if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-		TB.isMouseDown = true
-		if TB.placementOn then
-			local pos = getMouseHit()
-			if pos then
-				if TB.lockY then pos = Vector3.new(pos.X, TB.lockedY, pos.Z) end
-				brushOnce(pos)
-				updateInfo()
-			end
-		end
+	if processed then return end -- klik di atas UI diabaikan
+	if input.UserInputType == Enum.UserInputType.MouseButton1
+	or input.UserInputType == Enum.UserInputType.Touch then
+		isDrawing = true
+		currentInputPos = Vector2.new(input.Position.X, input.Position.Y)
+		if TB.placementOn then tryBrush() end
 	end
 end)
+
+UIS.InputChanged:Connect(function(input, processed)
+	if input.UserInputType == Enum.UserInputType.MouseMovement
+	or input.UserInputType == Enum.UserInputType.Touch then
+		currentInputPos = Vector2.new(input.Position.X, input.Position.Y)
+	end
+end)
+
 UIS.InputEnded:Connect(function(input)
-	if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-		TB.isMouseDown = false
+	if input.UserInputType == Enum.UserInputType.MouseButton1
+	or input.UserInputType == Enum.UserInputType.Touch then
+		isDrawing = false
 	end
 end)
+
 RunService.RenderStepped:Connect(function()
-	if TB.isMouseDown and TB.placementOn then
-		local pos = getMouseHit()
-		if pos then
-			if TB.lockY then pos = Vector3.new(pos.X, TB.lockedY, pos.Z) end
-			brushOnce(pos)
-			updateInfo()
-		end
+	if isDrawing and TB.placementOn then
+		tryBrush()
 	end
 end)
 
 updateInfo()
-updateMatLabel()
-updateShapeLabel()
-updateSizeLabel()
 
-print("[TerrainCraft] Semua siap.")
+print("[TerrainCraft] Semua siap — mendukung Mouse & Touch.")
