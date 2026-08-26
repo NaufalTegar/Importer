@@ -1,0 +1,866 @@
+--[[
+    HYAZ STUDIO LITE UI
+    Beta v0.0.01
+
+    Safe beta shell for Roblox Studio / experiences you control.
+    This file does NOT contain executor injection, exploit hooks, or security bypasses.
+
+    Install:
+    1. Put this LocalScript inside StarterPlayer > StarterPlayerScripts
+       (or StarterGui).
+    2. Run Play Test.
+    3. The UI creates a safe adapter folder in PlayerGui:
+       HYAZ_STUDIO_BRIDGE
+    4. Studio-side scripts you own can bind to the BindableEvents in that folder.
+
+    Current real beta features:
+    - Modern responsive UI shell
+    - Explorer
+    - World selection by click/tap
+    - Properties viewer/editor for BasePart
+    - Insert Part
+    - Duplicate / Delete
+    - Anchor toggle
+    - Internal JSON import/export for BaseParts / Models
+    - Project panel + status notifications
+    - Bridge events for future Studio Lite integration
+]]
+
+local Players = game:GetService("Players")
+local UserInputService = game:GetService("UserInputService")
+local HttpService = game:GetService("HttpService")
+local TweenService = game:GetService("TweenService")
+local RunService = game:GetService("RunService")
+
+local player = Players.LocalPlayer
+local playerGui = player:WaitForChild("PlayerGui")
+local mouse = player:GetMouse()
+
+local VERSION = "v0.0.01"
+local GUI_NAME = "HYAZ_STUDIO_LITE"
+
+local old = playerGui:FindFirstChild(GUI_NAME)
+if old then old:Destroy() end
+
+-- =========================================================
+-- Theme
+-- =========================================================
+local T = {
+    bg = Color3.fromRGB(12, 14, 18),
+    panel = Color3.fromRGB(18, 21, 27),
+    panel2 = Color3.fromRGB(24, 28, 35),
+    line = Color3.fromRGB(48, 54, 65),
+    text = Color3.fromRGB(232, 235, 240),
+    dim = Color3.fromRGB(145, 153, 168),
+    accent = Color3.fromRGB(225, 55, 65),
+    accent2 = Color3.fromRGB(110, 28, 35),
+    success = Color3.fromRGB(53, 185, 105),
+    warn = Color3.fromRGB(224, 163, 61),
+}
+
+local function inst(className, props, parent)
+    local o = Instance.new(className)
+    for k,v in pairs(props or {}) do
+        o[k] = v
+    end
+    o.Parent = parent
+    return o
+end
+
+local function corner(parent, radius)
+    inst("UICorner", {CornerRadius = UDim.new(0, radius or 8)}, parent)
+end
+
+local function stroke(parent, color, thickness, transparency)
+    inst("UIStroke", {
+        Color = color or T.line,
+        Thickness = thickness or 1,
+        Transparency = transparency or 0
+    }, parent)
+end
+
+local function pad(parent, l, r, t, b)
+    inst("UIPadding", {
+        PaddingLeft = UDim.new(0, l or 0),
+        PaddingRight = UDim.new(0, r or 0),
+        PaddingTop = UDim.new(0, t or 0),
+        PaddingBottom = UDim.new(0, b or 0)
+    }, parent)
+end
+
+local function textLabel(parent, text, size, bold)
+    return inst("TextLabel", {
+        BackgroundTransparency = 1,
+        Text = text or "",
+        TextColor3 = T.text,
+        TextSize = size or 14,
+        Font = bold and Enum.Font.GothamBold or Enum.Font.Gotham,
+        TextXAlignment = Enum.TextXAlignment.Left,
+        TextYAlignment = Enum.TextYAlignment.Center,
+    }, parent)
+end
+
+local function button(parent, text, w)
+    local b = inst("TextButton", {
+        Size = UDim2.fromOffset(w or 92, 34),
+        BackgroundColor3 = T.panel2,
+        Text = text,
+        TextColor3 = T.text,
+        TextSize = 13,
+        AutoButtonColor = false,
+        Font = Enum.Font.GothamMedium,
+    }, parent)
+    corner(b, 7)
+    stroke(b)
+    return b
+end
+
+local function setButtonActive(b, active)
+    if active then
+        b.BackgroundColor3 = T.accent2
+        b.TextColor3 = Color3.new(1,1,1)
+    else
+        b.BackgroundColor3 = T.panel2
+        b.TextColor3 = T.text
+    end
+end
+
+-- =========================================================
+-- Root
+-- =========================================================
+local gui = inst("ScreenGui", {
+    Name = GUI_NAME,
+    IgnoreGuiInset = false,
+    ResetOnSpawn = false,
+    ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
+}, playerGui)
+
+local root = inst("Frame", {
+    Name = "Root",
+    BackgroundColor3 = T.bg,
+    Size = UDim2.fromScale(1,1),
+    BorderSizePixel = 0,
+}, gui)
+
+-- =========================================================
+-- Safe Bridge
+-- =========================================================
+local bridge = inst("Folder", {Name = "HYAZ_STUDIO_BRIDGE"}, gui)
+
+local bridgeEventNames = {
+    "ToolChanged",
+    "SelectionChanged",
+    "InsertRequested",
+    "DeleteRequested",
+    "DuplicateRequested",
+    "ImportRequested",
+    "ExportRequested",
+    "ProjectAction",
+}
+
+local bridgeEvents = {}
+for _,name in ipairs(bridgeEventNames) do
+    bridgeEvents[name] = inst("BindableEvent", {Name = name}, bridge)
+end
+
+-- =========================================================
+-- Topbar
+-- =========================================================
+local top = inst("Frame", {
+    Name = "Topbar",
+    BackgroundColor3 = T.panel,
+    Size = UDim2.new(1,0,0,50),
+    BorderSizePixel = 0,
+}, root)
+stroke(top, T.line, 1, .2)
+
+local brand = textLabel(top, "HYAZ  STUDIO LITE", 18, true)
+brand.Position = UDim2.fromOffset(18,0)
+brand.Size = UDim2.fromOffset(220,50)
+
+local versionLabel = textLabel(top, "BETA "..VERSION, 11, false)
+versionLabel.TextColor3 = T.dim
+versionLabel.Position = UDim2.fromOffset(224,0)
+versionLabel.Size = UDim2.fromOffset(100,50)
+
+local tabs = inst("Frame", {
+    BackgroundTransparency = 1,
+    Position = UDim2.fromOffset(320,8),
+    Size = UDim2.new(1,-500,0,34),
+}, top)
+inst("UIListLayout", {
+    FillDirection = Enum.FillDirection.Horizontal,
+    Padding = UDim.new(0,6),
+    SortOrder = Enum.SortOrder.LayoutOrder,
+}, tabs)
+
+for _,name in ipairs({"FILE","HOME","MODEL","SCRIPT","TEST"}) do
+    local b = button(tabs, name, 78)
+    if name == "HOME" then setButtonActive(b,true) end
+end
+
+local projectName = textLabel(top, "Project: Untitled", 12, false)
+projectName.TextColor3 = T.dim
+projectName.AnchorPoint = Vector2.new(1,0)
+projectName.Position = UDim2.new(1,-18,0,0)
+projectName.Size = UDim2.fromOffset(180,50)
+projectName.TextXAlignment = Enum.TextXAlignment.Right
+
+-- =========================================================
+-- Toolbar
+-- =========================================================
+local toolbar = inst("ScrollingFrame", {
+    Name = "Toolbar",
+    BackgroundColor3 = T.panel,
+    Position = UDim2.fromOffset(0,50),
+    Size = UDim2.new(1,0,0,48),
+    BorderSizePixel = 0,
+    CanvasSize = UDim2.new(),
+    AutomaticCanvasSize = Enum.AutomaticSize.X,
+    ScrollingDirection = Enum.ScrollingDirection.X,
+    ScrollBarThickness = 0,
+}, root)
+stroke(toolbar, T.line, 1, .25)
+pad(toolbar, 10,10,7,7)
+
+local toolList = inst("Frame", {
+    BackgroundTransparency = 1,
+    Size = UDim2.fromScale(1,1),
+}, toolbar)
+inst("UIListLayout", {
+    FillDirection = Enum.FillDirection.Horizontal,
+    Padding = UDim.new(0,6),
+    VerticalAlignment = Enum.VerticalAlignment.Center,
+}, toolList)
+
+local toolButtons = {}
+local activeTool = "Select"
+
+local function setTool(name)
+    activeTool = name
+    for n,b in pairs(toolButtons) do
+        setButtonActive(b, n == name)
+    end
+    bridgeEvents.ToolChanged:Fire(name)
+end
+
+for _,name in ipairs({"Select","Move","Scale","Rotate","Insert Part","Duplicate","Delete","Anchor","Import","Export"}) do
+    local b = button(toolList, name, name == "Insert Part" and 105 or 82)
+    toolButtons[name] = b
+    b.MouseButton1Click:Connect(function()
+        if name == "Select" or name == "Move" or name == "Scale" or name == "Rotate" then
+            setTool(name)
+        end
+    end)
+end
+setTool("Select")
+
+-- =========================================================
+-- Side panels
+-- =========================================================
+local explorer = inst("Frame", {
+    Name = "Explorer",
+    BackgroundColor3 = T.panel,
+    Position = UDim2.fromOffset(8,106),
+    Size = UDim2.new(0,250,1,-114),
+    BorderSizePixel = 0,
+}, root)
+corner(explorer,8); stroke(explorer)
+
+local exTitle = textLabel(explorer, "EXPLORER", 13, true)
+exTitle.Position = UDim2.fromOffset(12,6)
+exTitle.Size = UDim2.new(1,-24,0,30)
+
+local exSearch = inst("TextBox", {
+    Position = UDim2.fromOffset(10,40),
+    Size = UDim2.new(1,-20,0,34),
+    BackgroundColor3 = T.panel2,
+    Text = "",
+    PlaceholderText = "Filter workspace...",
+    PlaceholderColor3 = T.dim,
+    TextColor3 = T.text,
+    TextSize = 12,
+    ClearTextOnFocus = false,
+    Font = Enum.Font.Gotham,
+}, explorer)
+corner(exSearch,6); stroke(exSearch); pad(exSearch,8,8,0,0)
+
+local exScroll = inst("ScrollingFrame", {
+    Name = "Tree",
+    Position = UDim2.fromOffset(8,80),
+    Size = UDim2.new(1,-16,1,-88),
+    BackgroundTransparency = 1,
+    BorderSizePixel = 0,
+    CanvasSize = UDim2.new(),
+    AutomaticCanvasSize = Enum.AutomaticSize.Y,
+    ScrollBarThickness = 4,
+}, explorer)
+local exLayout = inst("UIListLayout", {
+    Padding = UDim.new(0,2),
+    SortOrder = Enum.SortOrder.LayoutOrder,
+}, exScroll)
+
+local props = inst("Frame", {
+    Name = "Properties",
+    BackgroundColor3 = T.panel,
+    AnchorPoint = Vector2.new(1,0),
+    Position = UDim2.new(1,-8,0,106),
+    Size = UDim2.new(0,270,1,-114),
+    BorderSizePixel = 0,
+}, root)
+corner(props,8); stroke(props)
+
+local prTitle = textLabel(props, "PROPERTIES", 13, true)
+prTitle.Position = UDim2.fromOffset(12,6)
+prTitle.Size = UDim2.new(1,-24,0,30)
+
+local propScroll = inst("ScrollingFrame", {
+    Position = UDim2.fromOffset(8,40),
+    Size = UDim2.new(1,-16,1,-48),
+    BackgroundTransparency = 1,
+    BorderSizePixel = 0,
+    CanvasSize = UDim2.new(),
+    AutomaticCanvasSize = Enum.AutomaticSize.Y,
+    ScrollBarThickness = 4,
+}, props)
+inst("UIListLayout", {
+    Padding = UDim.new(0,5),
+    SortOrder = Enum.SortOrder.LayoutOrder,
+}, propScroll)
+
+-- Center HUD card
+local centerCard = inst("Frame", {
+    Name = "ViewportHUD",
+    BackgroundColor3 = Color3.fromRGB(12,14,18),
+    BackgroundTransparency = .18,
+    Position = UDim2.fromOffset(266,106),
+    Size = UDim2.new(1,-552,1,-114),
+    BorderSizePixel = 0,
+}, root)
+corner(centerCard,8); stroke(centerCard, T.line, 1, .3)
+
+local hint = textLabel(centerCard, "3D VIEWPORT  •  click/tap a BasePart to select", 12, false)
+hint.Position = UDim2.fromOffset(12,8)
+hint.Size = UDim2.new(1,-24,0,28)
+hint.TextColor3 = T.dim
+
+local selectionPill = textLabel(centerCard, "No selection", 12, true)
+selectionPill.AnchorPoint = Vector2.new(.5,1)
+selectionPill.Position = UDim2.new(.5,0,1,-12)
+selectionPill.Size = UDim2.fromOffset(320,34)
+selectionPill.TextXAlignment = Enum.TextXAlignment.Center
+selectionPill.BackgroundColor3 = T.panel
+selectionPill.BackgroundTransparency = .08
+corner(selectionPill, 17); stroke(selectionPill)
+
+-- =========================================================
+-- Notification
+-- =========================================================
+local toast = inst("TextLabel", {
+    AnchorPoint = Vector2.new(.5,1),
+    Position = UDim2.new(.5,0,1,-18),
+    Size = UDim2.fromOffset(360,40),
+    BackgroundColor3 = T.panel2,
+    TextColor3 = T.text,
+    TextSize = 12,
+    Font = Enum.Font.GothamMedium,
+    Visible = false,
+    ZIndex = 50,
+}, root)
+corner(toast,9); stroke(toast)
+
+local toastToken = 0
+local function notify(msg, kind)
+    toastToken += 1
+    local token = toastToken
+    toast.Text = msg
+    toast.BackgroundColor3 =
+        kind == "ok" and Color3.fromRGB(25,75,48)
+        or kind == "warn" and Color3.fromRGB(80,57,25)
+        or T.panel2
+    toast.Visible = true
+    task.delay(2.2, function()
+        if token == toastToken then
+            toast.Visible = false
+        end
+    end)
+end
+
+-- =========================================================
+-- Selection
+-- =========================================================
+local selected = nil
+local selectionBox = inst("SelectionBox", {
+    Name = "HYAZ_Selection",
+    Color3 = T.accent,
+    LineThickness = .04,
+    SurfaceTransparency = .88,
+    Parent = workspace,
+})
+
+local function vec3ToString(v)
+    return string.format("%.3f, %.3f, %.3f", v.X, v.Y, v.Z)
+end
+
+local function parseVec3(s)
+    local a,b,c = string.match(s, "^%s*([%-%d%.]+)%s*,%s*([%-%d%.]+)%s*,%s*([%-%d%.]+)%s*$")
+    if not a then return nil end
+    return Vector3.new(tonumber(a),tonumber(b),tonumber(c))
+end
+
+local function clearChildren(frame)
+    for _,c in ipairs(frame:GetChildren()) do
+        if not c:IsA("UIListLayout") and not c:IsA("UIPadding") then c:Destroy() end
+    end
+end
+
+local refreshProperties
+
+local function setSelected(obj)
+    if obj and not obj:IsA("BasePart") then obj = nil end
+    selected = obj
+    selectionBox.Adornee = selected
+    if selected then
+        selectionPill.Text = selected:GetFullName()
+    else
+        selectionPill.Text = "No selection"
+    end
+    bridgeEvents.SelectionChanged:Fire(selected)
+    if refreshProperties then refreshProperties() end
+end
+
+-- =========================================================
+-- Properties editor
+-- =========================================================
+local function makePropRow(labelText, initial, onCommit)
+    local row = inst("Frame", {
+        Size = UDim2.new(1,0,0,36),
+        BackgroundColor3 = T.panel2,
+        BorderSizePixel = 0,
+    }, propScroll)
+    corner(row,6)
+
+    local l = textLabel(row, labelText, 11, false)
+    l.TextColor3 = T.dim
+    l.Position = UDim2.fromOffset(8,0)
+    l.Size = UDim2.new(.34,-8,1,0)
+
+    local box = inst("TextBox", {
+        Position = UDim2.new(.34,0,0,4),
+        Size = UDim2.new(.66,-6,1,-8),
+        BackgroundColor3 = T.bg,
+        Text = initial or "",
+        TextColor3 = T.text,
+        TextSize = 11,
+        ClearTextOnFocus = false,
+        Font = Enum.Font.Gotham,
+    }, row)
+    corner(box,5); stroke(box, T.line, 1, .35); pad(box,6,6,0,0)
+    box.FocusLost:Connect(function(enter)
+        if onCommit then onCommit(box.Text) end
+    end)
+    return box
+end
+
+refreshProperties = function()
+    clearChildren(propScroll)
+    if not selected then
+        local none = textLabel(propScroll, "Select a BasePart in the world.", 12, false)
+        none.TextColor3 = T.dim
+        none.Size = UDim2.new(1,0,0,34)
+        return
+    end
+
+    makePropRow("Name", selected.Name, function(v)
+        if v ~= "" then selected.Name = v; selectionPill.Text = selected:GetFullName() end
+    end)
+
+    makePropRow("Position", vec3ToString(selected.Position), function(v)
+        local n = parseVec3(v)
+        if n then selected.Position = n else notify("Format Position: x, y, z","warn") end
+    end)
+
+    local rx,ry,rz = selected.CFrame:ToOrientation()
+    makePropRow("Rotation", vec3ToString(Vector3.new(math.deg(rx),math.deg(ry),math.deg(rz))), function(v)
+        local n = parseVec3(v)
+        if n then
+            selected.CFrame = CFrame.new(selected.Position) * CFrame.Angles(math.rad(n.X),math.rad(n.Y),math.rad(n.Z))
+        else
+            notify("Format Rotation: x, y, z","warn")
+        end
+    end)
+
+    makePropRow("Size", vec3ToString(selected.Size), function(v)
+        local n = parseVec3(v)
+        if n and n.X > 0 and n.Y > 0 and n.Z > 0 then selected.Size = n else notify("Size tidak valid","warn") end
+    end)
+
+    makePropRow("Transparency", tostring(selected.Transparency), function(v)
+        local n = tonumber(v)
+        if n then selected.Transparency = math.clamp(n,0,1) end
+    end)
+
+    makePropRow("Anchored", tostring(selected.Anchored), function(v)
+        local b = string.lower(v) == "true" or v == "1" or string.lower(v) == "yes"
+        selected.Anchored = b
+    end)
+
+    makePropRow("CanCollide", tostring(selected.CanCollide), function(v)
+        local b = string.lower(v) == "true" or v == "1" or string.lower(v) == "yes"
+        selected.CanCollide = b
+    end)
+
+    makePropRow("Material", selected.Material.Name, function(v)
+        local ok,mat = pcall(function() return Enum.Material[v] end)
+        if ok and mat then selected.Material = mat else notify("Material tidak ditemukan","warn") end
+    end)
+end
+refreshProperties()
+
+-- =========================================================
+-- Explorer
+-- =========================================================
+local function isExplorerObject(o)
+    return o:IsA("Model") or o:IsA("BasePart") or o:IsA("Folder")
+end
+
+local function refreshExplorer()
+    clearChildren(exScroll)
+    local filter = string.lower(exSearch.Text or "")
+
+    local workspaceRow = button(exScroll, "▼ Workspace", 230)
+    workspaceRow.TextXAlignment = Enum.TextXAlignment.Left
+
+    local count = 0
+    for _,o in ipairs(workspace:GetChildren()) do
+        if isExplorerObject(o) then
+            local n = string.lower(o.Name)
+            if filter == "" or string.find(n, filter, 1, true) then
+                count += 1
+                local row = button(exScroll, "   "..o.Name, 230)
+                row.TextXAlignment = Enum.TextXAlignment.Left
+                if o:IsA("BasePart") then
+                    row.MouseButton1Click:Connect(function()
+                        setSelected(o)
+                    end)
+                end
+            end
+        end
+        if count >= 100 then break end
+    end
+end
+
+refreshExplorer()
+exSearch:GetPropertyChangedSignal("Text"):Connect(refreshExplorer)
+workspace.ChildAdded:Connect(function() task.defer(refreshExplorer) end)
+workspace.ChildRemoved:Connect(function() task.defer(refreshExplorer) end)
+
+-- =========================================================
+-- Real beta actions
+-- =========================================================
+local function insertPart()
+    local p = Instance.new("Part")
+    p.Name = "Part"
+    p.Size = Vector3.new(4,1,4)
+    p.Anchored = true
+    p.Position = workspace.CurrentCamera and (workspace.CurrentCamera.CFrame.Position + workspace.CurrentCamera.CFrame.LookVector * 12) or Vector3.new(0,5,0)
+    p.Parent = workspace
+    setSelected(p)
+    bridgeEvents.InsertRequested:Fire("Part", p)
+    notify("Part dibuat","ok")
+end
+
+local function duplicateSelected()
+    if not selected then return notify("Tidak ada objek terpilih","warn") end
+    local c = selected:Clone()
+    c.Parent = selected.Parent
+    c.CFrame = selected.CFrame * CFrame.new(2,0,2)
+    setSelected(c)
+    bridgeEvents.DuplicateRequested:Fire(c)
+    notify("Objek diduplikasi","ok")
+end
+
+local function deleteSelected()
+    if not selected then return notify("Tidak ada objek terpilih","warn") end
+    local oldSel = selected
+    setSelected(nil)
+    bridgeEvents.DeleteRequested:Fire(oldSel)
+    oldSel:Destroy()
+    notify("Objek dihapus","ok")
+end
+
+local function toggleAnchor()
+    if not selected then return notify("Tidak ada objek terpilih","warn") end
+    selected.Anchored = not selected.Anchored
+    refreshProperties()
+    notify("Anchored = "..tostring(selected.Anchored),"ok")
+end
+
+toolButtons["Insert Part"].MouseButton1Click:Connect(insertPart)
+toolButtons["Duplicate"].MouseButton1Click:Connect(duplicateSelected)
+toolButtons["Delete"].MouseButton1Click:Connect(deleteSelected)
+toolButtons["Anchor"].MouseButton1Click:Connect(toggleAnchor)
+
+-- =========================================================
+-- Internal HYAZ JSON codec
+-- Supports BaseParts and Models containing BaseParts.
+-- =========================================================
+local function colorToArray(c)
+    return {math.floor(c.R*255+.5), math.floor(c.G*255+.5), math.floor(c.B*255+.5)}
+end
+
+local function serializePart(p)
+    local rx,ry,rz = p.CFrame:ToOrientation()
+    return {
+        class = p.ClassName,
+        name = p.Name,
+        position = {p.Position.X,p.Position.Y,p.Position.Z},
+        rotation = {math.deg(rx),math.deg(ry),math.deg(rz)},
+        size = {p.Size.X,p.Size.Y,p.Size.Z},
+        color = colorToArray(p.Color),
+        material = p.Material.Name,
+        transparency = p.Transparency,
+        anchored = p.Anchored,
+        canCollide = p.CanCollide,
+    }
+end
+
+local function collectExportObjects()
+    if selected then
+        local arr = {}
+        if selected:IsA("BasePart") then
+            table.insert(arr, serializePart(selected))
+        elseif selected:IsA("Model") then
+            for _,d in ipairs(selected:GetDescendants()) do
+                if d:IsA("BasePart") then table.insert(arr, serializePart(d)) end
+            end
+        end
+        return arr
+    end
+
+    local arr = {}
+    for _,d in ipairs(workspace:GetDescendants()) do
+        local inCharacter = player.Character and d:IsDescendantOf(player.Character)
+        if d:IsA("BasePart") and not inCharacter then
+            table.insert(arr, serializePart(d))
+            if #arr >= 500 then break end
+        end
+    end
+    return arr
+end
+
+local function decodePart(data)
+    if type(data) ~= "table" then return nil end
+    local className = data.class
+    if className ~= "Part" and className ~= "WedgePart" and className ~= "CornerWedgePart" and className ~= "TrussPart" then
+        className = "Part"
+    end
+    local p = Instance.new(className)
+    p.Name = tostring(data.name or className)
+
+    local pos = data.position or {0,5,0}
+    local rot = data.rotation or {0,0,0}
+    local size = data.size or {4,1,4}
+    local col = data.color or {163,162,165}
+
+    p.Size = Vector3.new(tonumber(size[1]) or 4, tonumber(size[2]) or 1, tonumber(size[3]) or 4)
+    p.CFrame = CFrame.new(
+        tonumber(pos[1]) or 0,
+        tonumber(pos[2]) or 5,
+        tonumber(pos[3]) or 0
+    ) * CFrame.Angles(
+        math.rad(tonumber(rot[1]) or 0),
+        math.rad(tonumber(rot[2]) or 0),
+        math.rad(tonumber(rot[3]) or 0)
+    )
+
+    p.Color = Color3.fromRGB(
+        math.clamp(tonumber(col[1]) or 163,0,255),
+        math.clamp(tonumber(col[2]) or 162,0,255),
+        math.clamp(tonumber(col[3]) or 165,0,255)
+    )
+
+    if data.material and Enum.Material[data.material] then p.Material = Enum.Material[data.material] end
+    p.Transparency = math.clamp(tonumber(data.transparency) or 0,0,1)
+    p.Anchored = data.anchored ~= false
+    p.CanCollide = data.canCollide ~= false
+    return p
+end
+
+-- =========================================================
+-- Import / Export modal
+-- =========================================================
+local modal = inst("Frame", {
+    Name = "ImportExportModal",
+    AnchorPoint = Vector2.new(.5,.5),
+    Position = UDim2.fromScale(.5,.5),
+    Size = UDim2.fromOffset(620,430),
+    BackgroundColor3 = T.panel,
+    Visible = false,
+    ZIndex = 30,
+}, root)
+corner(modal,10); stroke(modal, T.line, 1, 0)
+
+local modalTitle = textLabel(modal, "IMPORT / EXPORT", 15, true)
+modalTitle.Position = UDim2.fromOffset(16,8)
+modalTitle.Size = UDim2.new(1,-90,0,36)
+modalTitle.ZIndex = 31
+
+local closeModal = button(modal, "X", 36)
+closeModal.Position = UDim2.new(1,-46,0,8)
+closeModal.ZIndex = 31
+
+local ioBox = inst("TextBox", {
+    Position = UDim2.fromOffset(14,52),
+    Size = UDim2.new(1,-28,1,-112),
+    BackgroundColor3 = T.bg,
+    Text = "",
+    PlaceholderText = "HYAZ JSON project data appears here...",
+    PlaceholderColor3 = T.dim,
+    TextColor3 = T.text,
+    TextSize = 12,
+    TextXAlignment = Enum.TextXAlignment.Left,
+    TextYAlignment = Enum.TextYAlignment.Top,
+    ClearTextOnFocus = false,
+    MultiLine = true,
+    TextWrapped = false,
+    Font = Enum.Font.Code,
+    ZIndex = 31,
+}, modal)
+corner(ioBox,7); stroke(ioBox); pad(ioBox,8,8,8,8)
+
+local ioButtons = inst("Frame", {
+    BackgroundTransparency = 1,
+    Position = UDim2.new(0,14,1,-50),
+    Size = UDim2.new(1,-28,0,38),
+    ZIndex = 31,
+}, modal)
+inst("UIListLayout", {
+    FillDirection = Enum.FillDirection.Horizontal,
+    Padding = UDim.new(0,8),
+}, ioButtons)
+
+local doExport = button(ioButtons, "EXPORT JSON", 130); doExport.ZIndex=32
+local doImport = button(ioButtons, "IMPORT JSON", 130); doImport.ZIndex=32
+local clearIO = button(ioButtons, "CLEAR", 90); clearIO.ZIndex=32
+
+closeModal.MouseButton1Click:Connect(function() modal.Visible=false end)
+clearIO.MouseButton1Click:Connect(function() ioBox.Text="" end)
+
+doExport.MouseButton1Click:Connect(function()
+    local payload = {
+        format = "HYAZ_PROJECT_JSON",
+        version = VERSION,
+        generatedAt = os.time(),
+        objects = collectExportObjects()
+    }
+    ioBox.Text = HttpService:JSONEncode(payload)
+    bridgeEvents.ExportRequested:Fire(payload)
+    notify("Export JSON siap disalin","ok")
+end)
+
+doImport.MouseButton1Click:Connect(function()
+    if ioBox.Text == "" then return notify("Tempel HYAZ JSON terlebih dahulu","warn") end
+    local ok,data = pcall(function() return HttpService:JSONDecode(ioBox.Text) end)
+    if not ok or type(data) ~= "table" or type(data.objects) ~= "table" then
+        return notify("JSON tidak valid","warn")
+    end
+
+    local folder = Instance.new("Folder")
+    folder.Name = "HYAZ_Imported_"..os.time()
+    folder.Parent = workspace
+
+    local count = 0
+    for _,item in ipairs(data.objects) do
+        local p = decodePart(item)
+        if p then
+            p.Parent = folder
+            count += 1
+        end
+        if count >= 500 then break end
+    end
+    bridgeEvents.ImportRequested:Fire(data, folder)
+    refreshExplorer()
+    notify("Import selesai: "..count.." part","ok")
+end)
+
+toolButtons["Import"].MouseButton1Click:Connect(function()
+    modal.Visible = true
+    modalTitle.Text = "IMPORT • HYAZ JSON"
+    bridgeEvents.ProjectAction:Fire("OpenImport")
+end)
+
+toolButtons["Export"].MouseButton1Click:Connect(function()
+    modal.Visible = true
+    modalTitle.Text = "EXPORT • HYAZ JSON"
+    bridgeEvents.ProjectAction:Fire("OpenExport")
+end)
+
+-- =========================================================
+-- World click/tap selection
+-- =========================================================
+mouse.Button1Down:Connect(function()
+    if not gui.Enabled then return end
+    local target = mouse.Target
+    if target and target:IsA("BasePart") then
+        -- avoid selecting player's own character
+        if player.Character and target:IsDescendantOf(player.Character) then return end
+        setSelected(target)
+    end
+end)
+
+-- =========================================================
+-- Responsive layout
+-- =========================================================
+local function applyResponsive()
+    local viewport = workspace.CurrentCamera and workspace.CurrentCamera.ViewportSize or Vector2.new(1280,720)
+    local mobile = viewport.X < 820
+
+    if mobile then
+        explorer.Size = UDim2.new(0,190,1,-114)
+        props.Size = UDim2.new(0,210,1,-114)
+        centerCard.Position = UDim2.fromOffset(206,106)
+        centerCard.Size = UDim2.new(1,-424,1,-114)
+        toolbar.CanvasPosition = Vector2.zero
+        versionLabel.Visible = false
+        projectName.Visible = false
+        tabs.Visible = false
+    else
+        explorer.Size = UDim2.new(0,250,1,-114)
+        props.Size = UDim2.new(0,270,1,-114)
+        centerCard.Position = UDim2.fromOffset(266,106)
+        centerCard.Size = UDim2.new(1,-552,1,-114)
+        versionLabel.Visible = true
+        projectName.Visible = true
+        tabs.Visible = true
+    end
+end
+
+if workspace.CurrentCamera then
+    workspace.CurrentCamera:GetPropertyChangedSignal("ViewportSize"):Connect(applyResponsive)
+end
+applyResponsive()
+
+-- =========================================================
+-- Keyboard shortcuts
+-- =========================================================
+UserInputService.InputBegan:Connect(function(input, processed)
+    if processed then return end
+    if UserInputService:GetFocusedTextBox() then return end
+
+    if input.KeyCode == Enum.KeyCode.One then setTool("Select") end
+    if input.KeyCode == Enum.KeyCode.Two then setTool("Move") end
+    if input.KeyCode == Enum.KeyCode.Three then setTool("Scale") end
+    if input.KeyCode == Enum.KeyCode.Four then setTool("Rotate") end
+
+    if UserInputService:IsKeyDown(Enum.KeyCode.LeftControl) and input.KeyCode == Enum.KeyCode.D then
+        duplicateSelected()
+    elseif input.KeyCode == Enum.KeyCode.Delete or input.KeyCode == Enum.KeyCode.Backspace then
+        deleteSelected()
+    end
+end)
+
+notify("HYAZ Studio Lite "..VERSION.." loaded","ok")
+
+print("[HYAZ Studio Lite] Beta "..VERSION.." ready.")
+print("[HYAZ Studio Lite] Bridge path:", gui:GetFullName()..".HYAZ_STUDIO_BRIDGE")
